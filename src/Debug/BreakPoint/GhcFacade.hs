@@ -16,3 +16,5 @@ import           GHC.Unit.Module.Name as Ghc
 import           GHC.Tc.Utils.Monad as Ghc hiding (TcPlugin)
 import           GHC.Data.FastString as Ghc
 import           GHC.Hs.Utils as Ghc
+import           GHC.Types.Unique.Set as Ghc
+import           GHC.Utils.Outputable as Ghc

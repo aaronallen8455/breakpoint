@@ -1,93 +1,31 @@
+{-# LANGUAGE LambdaCase #-}
+{-# LANGUAGE TypeApplications #-}
+{-# LANGUAGE RankNTypes #-}
+{-# LANGUAGE ScopedTypeVariables #-}
+{-# LANGUAGE FlexibleContexts #-}
+{-# LANGUAGE GADTs #-}
+{-# LANGUAGE NamedFieldPuns #-}
 module Debug.BreakPoint
   ( plugin
   , traceVars
   ) where
 
-import           Control.Applicative ((<|>))
-import           Control.Monad.State
+import           Control.Applicative ((<|>), empty)
+import           Control.Monad.Reader
 import           Control.Monad.Trans.Maybe
 import           Data.Coerce
 import           Data.Data
+import qualified Data.DList as DL
 import           Data.Functor.Identity
 import qualified Data.Generics as Syb
 import qualified Data.Map as M
 
 import qualified Debug.BreakPoint.GhcFacade as Ghc
 
+import           Debug.Trace
+
 traceVars :: [String]
 traceVars = []
-
-recursion :: Data a => VarMap -> a -> EnvState a
-recursion resultVarMap a =
-  maybe (gmapM (recursion resultVarMap) a) pure
-    =<< transform resultVarMap a
-
-newtype T a = T (a -> EnvState (Maybe a))
-
-transform :: Data a => VarMap -> a -> EnvState (Maybe a)
-transform resultVarMap a = fmap join . runMaybeT $
-    wrap (hsVarCase resultVarMap)
-  where
-    wrap f = MaybeT $ do
-      case gcast (T f) of
-        Nothing -> pure Nothing
-        Just (T f') -> Just <$> f' a
-
-hsVarCase :: VarMap
-          -> Ghc.HsExpr Ghc.GhcRn
-          -> EnvState (Maybe (Ghc.HsExpr Ghc.GhcRn))
-hsVarCase resultVarMap x@(Ghc.HsVar _ (Ghc.L srcSpanAnn name)) = do
-  matchesTarget <- gets $ (== name) . targetName
-  if matchesTarget
-     then do
-       let srcSpan = OrderedSrcSpan $ Ghc.locA srcSpanAnn
-       modify' (overMap $ M.insert srcSpan [])
-       nameShow <- gets showName
-       -- knot tying
-       let names = Ghc.nlHsVar <$> (resultVarMap M.! srcSpan)
-
-           expr = Ghc.ExplicitList Ghc.noExtField $
-             Ghc.nlHsApp (Ghc.nlHsVar nameShow) <$> names
-
-       pure (Just expr)
-     else pure Nothing
-hsVarCase _ _ = pure Nothing
-
-type EnvState a = State Env a
-
-newtype OrderedSrcSpan = OrderedSrcSpan Ghc.SrcSpan
-  deriving Eq
-
-instance Ord OrderedSrcSpan where
-  compare = coerce Ghc.leftmost_smallest
-
-type VarMap = M.Map OrderedSrcSpan [Ghc.Name]
-
-data Env = MkEnv
-  { varMap :: !VarMap
-  , targetName :: !Ghc.Name
-  , showName :: !Ghc.Name
-  }
-
-overMap :: (VarMap -> VarMap) -> Env -> Env
-overMap f env = env { varMap = f $ varMap env }
-
--- Need to have access to Names
--- Need to build the var Map
--- Is it okay to use a state monad? Will it be a problem for knot tying?
-
-plugin :: Ghc.Plugin
-plugin = Ghc.defaultPlugin
-  { Ghc.pluginRecompile = Ghc.purePlugin
-  , Ghc.renamedResultAction = const renameAction
-  }
-
--- TODO
--- Instead of knot tying, could accumulate a set of var names. That is probably
--- a bit better actually. It can't be part of the state though since it should
--- not be propagated between different scopes. Can use UniqSet for the names.
--- Then there is no need for state monad at all, can just be a reader and use
--- local to add names to the set for particular cases.
 
 renameAction
   :: Ghc.TcGblEnv
@@ -99,48 +37,158 @@ renameAction gblEnv group = do
     Ghc.findImportedModule hscEnv (Ghc.mkModuleName "Debug.BreakPoint") Nothing
   -- TODO this could fail if base if not a dependency?
   Ghc.Found _ preludeMod <- liftIO $
-    Ghc.findImportedModule hscEnv (Ghc.mkModuleName "Prelude") (Just $ Ghc.fsLit "base")
+    Ghc.findImportedModule hscEnv (Ghc.mkModuleName "GHC.Show") (Just $ Ghc.fsLit "base")
 
   -- TODO cache these lookups somehow?
   traceVarsName <- Ghc.lookupOrig breakPointMod (Ghc.mkVarOcc "traceVars")
   showName <- Ghc.lookupOrig preludeMod (Ghc.mkVarOcc "show")
 
-  let (group', resultEnv) =
-        runState (recursion (varMap resultEnv) group)
-          MkEnv { varMap = mempty
+  let group' =
+        runReader (recurse group)
+          MkEnv { varSet = mempty
                 , targetName = traceVarsName
                 , showName = showName
                 }
   pure (gblEnv, group')
 
--- Top down, left to right
--- everywhereMI
---   :: Monad m
---   => Syb.GenericQ Bool
---   -> m ()
---   -> (forall a. Data a => Int -> a -> m a)
---   -> Syb.GenericM m
--- everywhereMI incQ afterEffect f = go 0 where
---   go !i x = do
---     let i' = if incQ x
---                 then i + 1
---                 else i
---     r <- Syb.gmapM (go i') =<< f i' x
---     -- pop the context stack here?
---     afterEffect
---     pure r
+recurse :: Data a => a -> EnvReader a
+recurse a =
+  maybe (gmapM recurse a) pure
+    =<< transform a
 
--- Could increment the scope level on any HsExpr. The issue is that things will
--- have the same scope level but not be visible to each other. There needs to
--- be some way to remove bindings from the context when the scope level gets
--- popped.
--- Perhaps the context could be a list of maps of bindings and after a branch
--- is processed, that list gets popped so that those bindings are no longer
--- in play when the sibling gets processed. This will require use of state monad.
+newtype T a = T (a -> EnvReader (Maybe a))
+
+transform :: forall a. Data a => a -> EnvReader (Maybe a)
+transform a = runMaybeT
+      $ wrap hsVarCase
+    <|> wrap matchCase
+    <|> wrap grhsCase
+    <|> wrap hsLetCase
+  where
+    wrap :: forall b. Data b
+         => (b -> EnvReader (Maybe b))
+         -> MaybeT (Reader Env) a
+    wrap f = do
+      case gcast @b @a (T f) of
+        Nothing -> empty
+        Just (T f') -> MaybeT $ f' a
+
+--------------------------------------------------------------------------------
+-- Variable Expr
+--------------------------------------------------------------------------------
+
+hsVarCase :: Ghc.HsExpr Ghc.GhcRn
+          -> EnvReader (Maybe (Ghc.HsExpr Ghc.GhcRn))
+hsVarCase (Ghc.HsVar _ (Ghc.L srcSpanAnn name)) = do
+  matchesTarget <- asks $ (== name) . targetName
+  if matchesTarget
+     then do
+       nameShow <- asks showName
+       names <- asks varSet
+
+       let expr = Ghc.ExplicitList Ghc.noExtField
+                $ Ghc.nlHsApp (Ghc.nlHsVar nameShow) . Ghc.nlHsVar
+              <$> names
+
+       pure (Just expr)
+     else pure Nothing
+hsVarCase _ = pure Nothing
+
+--------------------------------------------------------------------------------
+-- Match
+--------------------------------------------------------------------------------
+
+matchCase :: Ghc.Match Ghc.GhcRn (Ghc.LHsExpr Ghc.GhcRn)
+          -> EnvReader (Maybe (Ghc.Match Ghc.GhcRn (Ghc.LHsExpr Ghc.GhcRn)))
+matchCase Ghc.Match {Ghc.m_ext, Ghc.m_ctxt, Ghc.m_pats, Ghc.m_grhss} = do
+  let names = DL.toList $ extractVarPats m_pats
+  grhRes <- addScopedVars names $ recurse m_grhss
+  pure $ Just
+    Ghc.Match { Ghc.m_ext, Ghc.m_ctxt, Ghc.m_pats, Ghc.m_grhss = grhRes }
+
+extractVarPats :: Data a => a -> DL.DList Ghc.Name
+extractVarPats = Syb.everything (<>) (Syb.mkQ mempty findVarPats)
+  where
+    findVarPats :: Ghc.Pat Ghc.GhcRn -> DL.DList Ghc.Name
+    findVarPats (Ghc.VarPat _ (Ghc.L _ name)) = pure name
+    findVarPats _otherPat = mempty -- gmapQr (<>) mempty extractVarPats otherPat
+
+--------------------------------------------------------------------------------
+-- Guarded Right-hand Sides
+--------------------------------------------------------------------------------
+
+grhsCase :: Ghc.GRHSs Ghc.GhcRn (Ghc.LHsExpr Ghc.GhcRn)
+         -> EnvReader (Maybe (Ghc.GRHSs Ghc.GhcRn (Ghc.LHsExpr Ghc.GhcRn)))
+grhsCase Ghc.GRHSs { Ghc.grhssExt, Ghc.grhssGRHSs, Ghc.grhssLocalBinds } = do
+  let names = DL.toList
+            $ Syb.everything (<>) (Syb.mkQ mempty getLHSofBind) grhssLocalBinds
+  grhsRes <- addScopedVars names $ recurse grhssGRHSs
+  pure $ Just
+    Ghc.GRHSs { Ghc.grhssExt, Ghc.grhssGRHSs = grhsRes, Ghc.grhssLocalBinds }
+
+-- TODO also need to recurse over the RHS, excluding each LHS from its own scope.
+-- Although perhaps it's safer to not let bindings see each other because of
+-- possible mutual recursion, that's on the user though, so it should be justified.
 --
--- Current strat is to push a new map onto the bindings stack when a new HsExpr
--- is entered and the pop it off the stack after that HsExpr has been descended
--- into. If the special function is encountered then all bindings in the context
--- regardless of the stack delimination are used as the in scope bindings.
--- If I'm lucky then simply pushing on the stack for HsExprs is enough to handle
--- scoping correctly.
+-- Might be tricky to remove the self reference in the case of variable shadowing,
+-- maybe that is ok though? Would having a Map keyed on strings solve the shadowing
+-- problems all together?
+getLHSofBind :: Ghc.HsBindLR Ghc.GhcRn Ghc.GhcRn -> DL.DList Ghc.Name
+getLHSofBind = \case
+  Ghc.FunBind { Ghc.fun_id } -> pure $ Ghc.unLoc fun_id
+  Ghc.PatBind { Ghc.pat_lhs } -> extractVarPats pat_lhs
+  Ghc.VarBind { Ghc.var_id } -> pure var_id
+  Ghc.PatSynBind _ Ghc.PSB { Ghc.psb_args } -> extractNames psb_args
+
+extractNames :: Data a => a -> DL.DList Ghc.Name
+extractNames = DL.fromList . Syb.listify (const True)
+
+--------------------------------------------------------------------------------
+-- Let Binds (Non-do)
+--------------------------------------------------------------------------------
+
+hsLetCase :: Ghc.HsExpr Ghc.GhcRn
+            -> EnvReader (Maybe (Ghc.HsExpr Ghc.GhcRn))
+hsLetCase (Ghc.HsLet x binds lhs) = do
+  let names = DL.toList
+            $ Syb.everything (<>) (Syb.mkQ mempty getLHSofBind) binds
+  lhsRes <- addScopedVars names $ recurse lhs
+  pure . Just $
+    Ghc.HsLet x binds lhsRes
+hsLetCase _ = pure Nothing
+
+--------------------------------------------------------------------------------
+-- Env
+--------------------------------------------------------------------------------
+
+type EnvReader a = Reader Env a
+
+newtype OrderedSrcSpan = OrderedSrcSpan Ghc.SrcSpan
+  deriving Eq
+
+instance Ord OrderedSrcSpan where
+  compare = coerce Ghc.leftmost_smallest
+
+type VarSet = [Ghc.Name]
+
+data Env = MkEnv
+  { varSet :: !VarSet
+  , targetName :: !Ghc.Name
+  , showName :: !Ghc.Name
+  }
+
+overVarSet :: (VarSet -> VarSet) -> Env -> Env
+overVarSet f env = env { varSet = f $ varSet env }
+
+addScopedVars :: [Ghc.Name] -> EnvReader a -> EnvReader a
+addScopedVars names = local (overVarSet (names ++))
+
+-- Need to have access to Names
+-- Need to build the var Map
+-- Is it okay to use a state monad? Will it be a problem for knot tying?
+
+plugin :: Ghc.Plugin
+plugin = Ghc.defaultPlugin
+  { Ghc.pluginRecompile = Ghc.purePlugin
+  , Ghc.renamedResultAction = const renameAction
+  }
