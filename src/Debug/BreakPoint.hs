@@ -1,3 +1,4 @@
+{-# LANGUAGE BangPatterns #-}
 {-# LANGUAGE RecordWildCards #-}
 {-# LANGUAGE RecursiveDo #-}
 {-# LANGUAGE LambdaCase #-}
@@ -23,8 +24,11 @@ import qualified Data.DList as DL
 import           Data.Functor.Identity
 import qualified Data.Generics as Syb
 import qualified Data.Map.Lazy as M
+import           Data.Traversable (for)
 
 import qualified Debug.BreakPoint.GhcFacade as Ghc
+
+import           Debug.Trace
 
 traceVars :: M.Map String String
 traceVars = mempty
@@ -72,6 +76,7 @@ transform a = runMaybeT
     <|> wrap matchCase
     <|> wrap grhssCase
     <|> wrap hsLetCase
+    <|> wrap grhsCase
   where
     wrap :: forall b. Data b
          => (b -> EnvReader (Maybe b))
@@ -144,12 +149,12 @@ grhssCase Ghc.GRHSs { Ghc.grhssExt, Ghc.grhssGRHSs, Ghc.grhssLocalBinds } = mdo
   pure $ Just
     Ghc.GRHSs { Ghc.grhssExt, Ghc.grhssGRHSs = grhsRes, Ghc.grhssLocalBinds }
 
-getLHSofBind :: VarSet
+dealWithBind :: VarSet
              -> Ghc.HsBindLR Ghc.GhcRn Ghc.GhcRn
              -> WriterT VarSet
                         EnvReader
                         (Ghc.HsBindLR Ghc.GhcRn Ghc.GhcRn)
-getLHSofBind resultNames = \case
+dealWithBind resultNames = \case
   Ghc.FunBind {..} -> do
     let name = mkVarSet [Ghc.unLoc fun_id]
     tell name
@@ -183,10 +188,33 @@ getLHSofBind resultNames = \case
 extractNames :: Data a => a -> VarSet
 extractNames = mkVarSet . Syb.listify (const True)
 
--- grhsCase :: Ghc.GRHS Ghc.GhcRn (Ghc.LHsExpr Ghc.GhcRn)
---          -> EnvReader (Maybe (Ghc.GRHS Ghc.GhcRn (Ghc.LHsExpr Ghc.GhcRn)))
--- grhsCase (Ghc.GRHS x guards body) = do
---   let names = 
+grhsCase :: Ghc.GRHS Ghc.GhcRn (Ghc.LHsExpr Ghc.GhcRn)
+         -> EnvReader (Maybe (Ghc.GRHS Ghc.GhcRn (Ghc.LHsExpr Ghc.GhcRn)))
+grhsCase (Ghc.GRHS x guards body) = do
+  (guardsRes, names) <- runWriterT $ dealWithGuards guards
+  bodyRes <- addScopedVars names $ recurse body
+  pure . Just $ Ghc.GRHS x guardsRes bodyRes
+
+dealWithGuards :: [Ghc.LStmt Ghc.GhcRn (Ghc.LHsExpr Ghc.GhcRn)]
+               -> WriterT VarSet EnvReader [Ghc.LStmt Ghc.GhcRn (Ghc.LHsExpr Ghc.GhcRn)]
+dealWithGuards [] = pure []
+dealWithGuards (lstmt : rest) = mdo
+  (lstmtRes, names) <- lift . runWriterT $
+    for lstmt $ \case
+      Ghc.LetStmt x localBinds -> do
+        localBindsRes <- dealWithLocalBinds names localBinds
+        pure $ Ghc.LetStmt x localBindsRes
+
+      -- pattern guards
+      Ghc.BindStmt x lpat body -> do
+        let names = extractVarPats lpat
+        tell names
+        bodyRes <- lift $ recurse body
+        pure $ Ghc.BindStmt x lpat bodyRes
+
+      other -> pure other
+  tell names
+  (lstmtRes :) <$> mapWriterT (addScopedVars names) (dealWithGuards rest)
 
 --------------------------------------------------------------------------------
 -- Let Binds (Non-do)
@@ -197,6 +225,12 @@ hsLetCase :: Ghc.HsExpr Ghc.GhcRn
           -> EnvReader (Maybe (Ghc.HsExpr Ghc.GhcRn))
 hsLetCase (Ghc.HsLet x binds inExpr) = mdo
   (bindsRes, names) <- runWriterT $ dealWithLocalBinds names binds
+  !_ <- traceM $ Ghc.showSDocUnsafe $ Ghc.ppr bindsRes
+  -- TODO need to reorder the binds so that anything containing traceVars is
+  -- at the end of the list. Will need to make the bindings recursive if there
+  -- is more than one.
+  -- This is because GHC orders the bindings according to their dependencies.
+  -- Try finding the function that does this and using it here?
   inExprRes <- addScopedVars names $ recurse inExpr
   pure . Just $
     Ghc.HsLet x bindsRes inExprRes
@@ -210,9 +244,10 @@ dealWithLocalBinds resultNames = \case
   hlb@(Ghc.HsValBinds x valBinds) -> case valBinds of
     Ghc.ValBinds{} -> pure hlb
     Ghc.XValBindsLR (Ghc.NValBinds bindPairs sigs) -> do
+      !_ <- traceM $ Ghc.showSDocUnsafe $ Ghc.ppr bindPairs
       bindPairsRes <-
         (traverse . traverse . traverse . traverse)
-          (getLHSofBind resultNames)
+          (dealWithBind resultNames)
           bindPairs
       pure $ Ghc.HsValBinds x (Ghc.XValBindsLR (Ghc.NValBinds bindPairsRes sigs))
   x@(Ghc.HsIPBinds _ _) -> pure x -- TODO ImplicitParams
