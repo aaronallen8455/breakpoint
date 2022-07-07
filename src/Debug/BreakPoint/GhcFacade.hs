@@ -18,3 +18,4 @@ import           GHC.Data.FastString as Ghc
 import           GHC.Hs.Utils as Ghc
 import           GHC.Types.Unique.Set as Ghc
 import           GHC.Utils.Outputable as Ghc
+import           GHC.Hs.Binds as Ghc

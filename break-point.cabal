@@ -56,7 +56,7 @@ executable break-point
 test-suite spec
   main-is: Spec.hs
   hs-source-dirs: test
-  build-depends: base, tasty, tasty-hunit, break-point
+  build-depends: base, tasty, tasty-hunit, break-point, containers
   type: exitcode-stdio-1.0
   default-language: Haskell2010
   ghc-options: -fplugin Debug.BreakPoint

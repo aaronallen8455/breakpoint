@@ -1,3 +1,5 @@
+{-# LANGUAGE RecordWildCards #-}
+{-# LANGUAGE RecursiveDo #-}
 {-# LANGUAGE LambdaCase #-}
 {-# LANGUAGE TypeApplications #-}
 {-# LANGUAGE RankNTypes #-}
@@ -11,21 +13,21 @@ module Debug.BreakPoint
   ) where
 
 import           Control.Applicative ((<|>), empty)
+import           Control.Arrow ((&&&))
 import           Control.Monad.Reader
 import           Control.Monad.Trans.Maybe
+import           Control.Monad.Trans.Writer.CPS
 import           Data.Coerce
 import           Data.Data
 import qualified Data.DList as DL
 import           Data.Functor.Identity
 import qualified Data.Generics as Syb
-import qualified Data.Map as M
+import qualified Data.Map.Lazy as M
 
 import qualified Debug.BreakPoint.GhcFacade as Ghc
 
-import           Debug.Trace
-
-traceVars :: [String]
-traceVars = []
+traceVars :: M.Map String String
+traceVars = mempty
 
 renameAction
   :: Ghc.TcGblEnv
@@ -39,16 +41,22 @@ renameAction gblEnv group = do
   Ghc.Found _ preludeMod <- liftIO $
     Ghc.findImportedModule hscEnv (Ghc.mkModuleName "GHC.Show") (Just $ Ghc.fsLit "base")
 
+  Ghc.Found _ mapMod <- liftIO $
+    Ghc.findImportedModule hscEnv (Ghc.mkModuleName "Data.Map.Internal") (Just $ Ghc.fsLit "containers")
+
   -- TODO cache these lookups somehow?
   traceVarsName <- Ghc.lookupOrig breakPointMod (Ghc.mkVarOcc "traceVars")
   showName <- Ghc.lookupOrig preludeMod (Ghc.mkVarOcc "show")
+  fromListName <- Ghc.lookupOrig mapMod (Ghc.mkVarOcc "fromAscList")
 
   let group' =
         runReader (recurse group)
           MkEnv { varSet = mempty
-                , targetName = traceVarsName
-                , showName = showName
+                , traceVarsName
+                , showName
+                , fromListName
                 }
+
   pure (gblEnv, group')
 
 recurse :: Data a => a -> EnvReader a
@@ -62,7 +70,7 @@ transform :: forall a. Data a => a -> EnvReader (Maybe a)
 transform a = runMaybeT
       $ wrap hsVarCase
     <|> wrap matchCase
-    <|> wrap grhsCase
+    <|> wrap grhssCase
     <|> wrap hsLetCase
   where
     wrap :: forall b. Data b
@@ -80,17 +88,26 @@ transform a = runMaybeT
 hsVarCase :: Ghc.HsExpr Ghc.GhcRn
           -> EnvReader (Maybe (Ghc.HsExpr Ghc.GhcRn))
 hsVarCase (Ghc.HsVar _ (Ghc.L srcSpanAnn name)) = do
-  matchesTarget <- asks $ (== name) . targetName
+  matchesTarget <- asks $ (== name) . traceVarsName
   if matchesTarget
      then do
        nameShow <- asks showName
+       fromListName <- asks fromListName
        names <- asks varSet
 
-       let expr = Ghc.ExplicitList Ghc.noExtField
-                $ Ghc.nlHsApp (Ghc.nlHsVar nameShow) . Ghc.nlHsVar
-              <$> names
+       let mkTuple (Ghc.LexicalFastString varStr, name) =
+             Ghc.mkLHsTupleExpr
+               [ Ghc.nlHsLit . Ghc.mkHsString $ Ghc.unpackFS varStr
+               , Ghc.nlHsApp (Ghc.nlHsVar nameShow) $ Ghc.nlHsVar name
+               ]
+               Ghc.NoExtField
 
-       pure (Just expr)
+           mkList exprs = Ghc.noLocA (Ghc.ExplicitList Ghc.NoExtField exprs)
+
+           expr = Ghc.nlHsApp (Ghc.nlHsVar fromListName) . mkList
+                $ mkTuple <$> M.toList names
+
+       pure (Just $ Ghc.unLoc expr)
      else pure Nothing
 hsVarCase _ = pure Nothing
 
@@ -101,67 +118,111 @@ hsVarCase _ = pure Nothing
 matchCase :: Ghc.Match Ghc.GhcRn (Ghc.LHsExpr Ghc.GhcRn)
           -> EnvReader (Maybe (Ghc.Match Ghc.GhcRn (Ghc.LHsExpr Ghc.GhcRn)))
 matchCase Ghc.Match {Ghc.m_ext, Ghc.m_ctxt, Ghc.m_pats, Ghc.m_grhss} = do
-  let names = DL.toList $ extractVarPats m_pats
+  let names = extractVarPats m_pats
   grhRes <- addScopedVars names $ recurse m_grhss
   pure $ Just
     Ghc.Match { Ghc.m_ext, Ghc.m_ctxt, Ghc.m_pats, Ghc.m_grhss = grhRes }
 
-extractVarPats :: Data a => a -> DL.DList Ghc.Name
+extractVarPats :: Data a => a -> VarSet
 extractVarPats = Syb.everything (<>) (Syb.mkQ mempty findVarPats)
   where
-    findVarPats :: Ghc.Pat Ghc.GhcRn -> DL.DList Ghc.Name
-    findVarPats (Ghc.VarPat _ (Ghc.L _ name)) = pure name
+    findVarPats :: Ghc.Pat Ghc.GhcRn -> VarSet
+    findVarPats (Ghc.VarPat _ (Ghc.L _ name)) = mkVarSet [name]
     findVarPats _otherPat = mempty -- gmapQr (<>) mempty extractVarPats otherPat
 
 --------------------------------------------------------------------------------
 -- Guarded Right-hand Sides
 --------------------------------------------------------------------------------
 
-grhsCase :: Ghc.GRHSs Ghc.GhcRn (Ghc.LHsExpr Ghc.GhcRn)
+grhssCase :: Ghc.GRHSs Ghc.GhcRn (Ghc.LHsExpr Ghc.GhcRn)
          -> EnvReader (Maybe (Ghc.GRHSs Ghc.GhcRn (Ghc.LHsExpr Ghc.GhcRn)))
-grhsCase Ghc.GRHSs { Ghc.grhssExt, Ghc.grhssGRHSs, Ghc.grhssLocalBinds } = do
-  let names = DL.toList
-            $ Syb.everything (<>) (Syb.mkQ mempty getLHSofBind) grhssLocalBinds
+grhssCase Ghc.GRHSs { Ghc.grhssExt, Ghc.grhssGRHSs, Ghc.grhssLocalBinds } = mdo
+  (localBindsRes, names)
+    <- runWriterT $ dealWithLocalBinds names grhssLocalBinds
+
   grhsRes <- addScopedVars names $ recurse grhssGRHSs
   pure $ Just
     Ghc.GRHSs { Ghc.grhssExt, Ghc.grhssGRHSs = grhsRes, Ghc.grhssLocalBinds }
 
--- TODO also need to recurse over the RHS, excluding each LHS from its own scope.
--- Although perhaps it's safer to not let bindings see each other because of
--- possible mutual recursion, that's on the user though, so it should be justified.
---
--- Might be tricky to remove the self reference in the case of variable shadowing,
--- maybe that is ok though? Would having a Map keyed on strings solve the shadowing
--- problems all together?
-getLHSofBind :: Ghc.HsBindLR Ghc.GhcRn Ghc.GhcRn -> DL.DList Ghc.Name
-getLHSofBind = \case
-  Ghc.FunBind { Ghc.fun_id } -> pure $ Ghc.unLoc fun_id
-  Ghc.PatBind { Ghc.pat_lhs } -> extractVarPats pat_lhs
-  Ghc.VarBind { Ghc.var_id } -> pure var_id
-  Ghc.PatSynBind _ Ghc.PSB { Ghc.psb_args } -> extractNames psb_args
+getLHSofBind :: VarSet
+             -> Ghc.HsBindLR Ghc.GhcRn Ghc.GhcRn
+             -> WriterT VarSet
+                        EnvReader
+                        (Ghc.HsBindLR Ghc.GhcRn Ghc.GhcRn)
+getLHSofBind resultNames = \case
+  Ghc.FunBind {..} -> do
+    let name = mkVarSet [Ghc.unLoc fun_id]
+    tell name
+    matchesRes <- lift . addScopedVars (resultNames M.\\ name)
+                $ recurse fun_matches
+    pure Ghc.FunBind { Ghc.fun_matches = matchesRes, .. }
 
-extractNames :: Data a => a -> DL.DList Ghc.Name
-extractNames = DL.fromList . Syb.listify (const True)
+  Ghc.PatBind {..} -> do
+    let names = extractVarPats pat_lhs
+    tell names
+    rhsRes <- lift . addScopedVars (resultNames M.\\ names)
+            $ recurse pat_rhs
+    pure Ghc.PatBind { Ghc.pat_rhs = rhsRes, .. }
+
+  Ghc.VarBind {..} -> do
+    let name = mkVarSet [var_id]
+    tell name
+    rhsRes <- lift . addScopedVars (resultNames M.\\ name)
+            $ recurse var_rhs
+    pure Ghc.VarBind { Ghc.var_rhs = rhsRes, .. }
+
+  Ghc.PatSynBind x Ghc.PSB {..} -> do
+    let names = extractNames psb_args
+    tell names
+    defRes <- lift . addScopedVars (resultNames M.\\ names)
+            $ recurse psb_def
+    pure $ Ghc.PatSynBind x Ghc.PSB { psb_def = defRes, .. }
+
+  other -> pure other
+
+extractNames :: Data a => a -> VarSet
+extractNames = mkVarSet . Syb.listify (const True)
+
+-- grhsCase :: Ghc.GRHS Ghc.GhcRn (Ghc.LHsExpr Ghc.GhcRn)
+--          -> EnvReader (Maybe (Ghc.GRHS Ghc.GhcRn (Ghc.LHsExpr Ghc.GhcRn)))
+-- grhsCase (Ghc.GRHS x guards body) = do
+--   let names = 
 
 --------------------------------------------------------------------------------
 -- Let Binds (Non-do)
 --------------------------------------------------------------------------------
 
+-- TODO combine with hsVar case to allow for "quick failure"
 hsLetCase :: Ghc.HsExpr Ghc.GhcRn
-            -> EnvReader (Maybe (Ghc.HsExpr Ghc.GhcRn))
-hsLetCase (Ghc.HsLet x binds lhs) = do
-  let names = DL.toList
-            $ Syb.everything (<>) (Syb.mkQ mempty getLHSofBind) binds
-  lhsRes <- addScopedVars names $ recurse lhs
+          -> EnvReader (Maybe (Ghc.HsExpr Ghc.GhcRn))
+hsLetCase (Ghc.HsLet x binds inExpr) = mdo
+  (bindsRes, names) <- runWriterT $ dealWithLocalBinds names binds
+  inExprRes <- addScopedVars names $ recurse inExpr
   pure . Just $
-    Ghc.HsLet x binds lhsRes
+    Ghc.HsLet x bindsRes inExprRes
 hsLetCase _ = pure Nothing
+
+dealWithLocalBinds
+  :: VarSet
+  -> Ghc.HsLocalBinds Ghc.GhcRn
+  -> WriterT VarSet EnvReader (Ghc.HsLocalBinds Ghc.GhcRn)
+dealWithLocalBinds resultNames = \case
+  hlb@(Ghc.HsValBinds x valBinds) -> case valBinds of
+    Ghc.ValBinds{} -> pure hlb
+    Ghc.XValBindsLR (Ghc.NValBinds bindPairs sigs) -> do
+      bindPairsRes <-
+        (traverse . traverse . traverse . traverse)
+          (getLHSofBind resultNames)
+          bindPairs
+      pure $ Ghc.HsValBinds x (Ghc.XValBindsLR (Ghc.NValBinds bindPairsRes sigs))
+  x@(Ghc.HsIPBinds _ _) -> pure x -- TODO ImplicitParams
+  other -> pure other
 
 --------------------------------------------------------------------------------
 -- Env
 --------------------------------------------------------------------------------
 
-type EnvReader a = Reader Env a
+type EnvReader = Reader Env
 
 newtype OrderedSrcSpan = OrderedSrcSpan Ghc.SrcSpan
   deriving Eq
@@ -169,19 +230,26 @@ newtype OrderedSrcSpan = OrderedSrcSpan Ghc.SrcSpan
 instance Ord OrderedSrcSpan where
   compare = coerce Ghc.leftmost_smallest
 
-type VarSet = [Ghc.Name]
+type VarSet = M.Map Ghc.LexicalFastString Ghc.Name
 
 data Env = MkEnv
   { varSet :: !VarSet
-  , targetName :: !Ghc.Name
+  , traceVarsName :: !Ghc.Name
   , showName :: !Ghc.Name
+  , fromListName :: !Ghc.Name
   }
 
 overVarSet :: (VarSet -> VarSet) -> Env -> Env
 overVarSet f env = env { varSet = f $ varSet env }
 
-addScopedVars :: [Ghc.Name] -> EnvReader a -> EnvReader a
-addScopedVars names = local (overVarSet (names ++))
+getOccNameFS :: Ghc.Name -> Ghc.LexicalFastString
+getOccNameFS = Ghc.LexicalFastString . Ghc.occNameFS . Ghc.getOccName
+
+mkVarSet :: [Ghc.Name] -> VarSet
+mkVarSet names = M.fromList $ (getOccNameFS &&& id) <$> names
+
+addScopedVars :: VarSet -> EnvReader a -> EnvReader a
+addScopedVars names = local $ overVarSet (names <>)
 
 -- Need to have access to Names
 -- Need to build the var Map
