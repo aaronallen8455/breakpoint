@@ -27,6 +27,7 @@ testTree =
     -- let bind in do
     -- case branch binds
     -- binds in a list comprehension
+    -- arrow notation bindings
     []
 
 -- functionArgs :: Assertion

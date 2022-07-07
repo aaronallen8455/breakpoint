@@ -225,17 +225,21 @@ hsLetCase :: Ghc.HsExpr Ghc.GhcRn
           -> EnvReader (Maybe (Ghc.HsExpr Ghc.GhcRn))
 hsLetCase (Ghc.HsLet x binds inExpr) = mdo
   (bindsRes, names) <- runWriterT $ dealWithLocalBinds names binds
+
   !_ <- traceM $ Ghc.showSDocUnsafe $ Ghc.ppr bindsRes
   -- TODO need to reorder the binds so that anything containing traceVars is
   -- at the end of the list. Will need to make the bindings recursive if there
   -- is more than one.
   -- This is because GHC orders the bindings according to their dependencies.
   -- Try finding the function that does this and using it here?
+  -- depAnalBinds looks like it might be doing the sorting.
   inExprRes <- addScopedVars names $ recurse inExpr
   pure . Just $
     Ghc.HsLet x bindsRes inExprRes
 hsLetCase _ = pure Nothing
 
+-- TODO can use collectHsValBinders CollNoDictBinders to get the resultNames and ditch knot tying
+-- and then have the name set to pass to rnLocalValBindsRHS
 dealWithLocalBinds
   :: VarSet
   -> Ghc.HsLocalBinds Ghc.GhcRn
@@ -244,12 +248,19 @@ dealWithLocalBinds resultNames = \case
   hlb@(Ghc.HsValBinds x valBinds) -> case valBinds of
     Ghc.ValBinds{} -> pure hlb
     Ghc.XValBindsLR (Ghc.NValBinds bindPairs sigs) -> do
-      !_ <- traceM $ Ghc.showSDocUnsafe $ Ghc.ppr bindPairs
       bindPairsRes <-
         (traverse . traverse . traverse . traverse)
           (dealWithBind resultNames)
           bindPairs
-      pure $ Ghc.HsValBinds x (Ghc.XValBindsLR (Ghc.NValBinds bindPairsRes sigs))
+      let input = Ghc.ValBinds _ (snd <$> bindPairsRes) sigs
+      rnValBindsRHS
+      binds_w_dus <-
+        traverse
+          (Ghc.rnLBind (Ghc.mkScopedTvFn sigs))
+          (snd <$> bindsRes)
+      let !(anal_binds, _) = Ghc.depAnalBinds binds_w_dus
+
+      pure $ Ghc.HsValBinds x (Ghc.XValBindsLR (Ghc.NValBinds anal_binds sigs))
   x@(Ghc.HsIPBinds _ _) -> pure x -- TODO ImplicitParams
   other -> pure other
 
