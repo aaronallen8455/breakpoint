@@ -20,3 +20,6 @@ import           GHC.Types.Unique.Set as Ghc
 import           GHC.Utils.Outputable as Ghc
 import           GHC.Hs.Binds as Ghc
 import           GHC.Rename.Bind as Ghc
+import           GHC.Data.Bag as Ghc
+import           GHC.Types.Basic as Ghc
+import           GHC.Types.Name.Env as Ghc

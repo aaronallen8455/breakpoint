@@ -1,4 +1,3 @@
-{-# LANGUAGE BangPatterns #-}
 {-# LANGUAGE RecordWildCards #-}
 {-# LANGUAGE RecursiveDo #-}
 {-# LANGUAGE LambdaCase #-}
@@ -16,14 +15,18 @@ module Debug.BreakPoint
 import           Control.Applicative ((<|>), empty)
 import           Control.Arrow ((&&&))
 import           Control.Monad.Reader
+import           Control.Monad.Trans.Class
 import           Control.Monad.Trans.Maybe
 import           Control.Monad.Trans.Writer.CPS
 import           Data.Coerce
 import           Data.Data
 import qualified Data.DList as DL
+import           Data.Foldable
 import           Data.Functor.Identity
 import qualified Data.Generics as Syb
+import qualified Data.Graph as Graph
 import qualified Data.Map.Lazy as M
+import           Data.Monoid (Any(..))
 import           Data.Traversable (for)
 
 import qualified Debug.BreakPoint.GhcFacade as Ghc
@@ -53,8 +56,8 @@ renameAction gblEnv group = do
   showName <- Ghc.lookupOrig preludeMod (Ghc.mkVarOcc "show")
   fromListName <- Ghc.lookupOrig mapMod (Ghc.mkVarOcc "fromAscList")
 
-  let group' =
-        runReader (recurse group)
+  let (group', _) =
+        runReader (runWriterT $ recurse group)
           MkEnv { varSet = mempty
                 , traceVarsName
                 , showName
@@ -80,7 +83,7 @@ transform a = runMaybeT
   where
     wrap :: forall b. Data b
          => (b -> EnvReader (Maybe b))
-         -> MaybeT (Reader Env) a
+         -> MaybeT EnvReader a
     wrap f = do
       case gcast @b @a (T f) of
         Nothing -> empty
@@ -93,12 +96,12 @@ transform a = runMaybeT
 hsVarCase :: Ghc.HsExpr Ghc.GhcRn
           -> EnvReader (Maybe (Ghc.HsExpr Ghc.GhcRn))
 hsVarCase (Ghc.HsVar _ (Ghc.L srcSpanAnn name)) = do
-  matchesTarget <- asks $ (== name) . traceVarsName
+  matchesTarget <- lift . asks $ (== name) . traceVarsName
   if matchesTarget
      then do
-       nameShow <- asks showName
-       fromListName <- asks fromListName
-       names <- asks varSet
+       nameShow <- lift $ asks showName
+       fromListName <- lift $ asks fromListName
+       names <- lift $ asks varSet
 
        let mkTuple (Ghc.LexicalFastString varStr, name) =
              Ghc.mkLHsTupleExpr
@@ -112,6 +115,8 @@ hsVarCase (Ghc.HsVar _ (Ghc.L srcSpanAnn name)) = do
            expr = Ghc.nlHsApp (Ghc.nlHsVar fromListName) . mkList
                 $ mkTuple <$> M.toList names
 
+       tell $ Any True
+
        pure (Just $ Ghc.unLoc expr)
      else pure Nothing
 hsVarCase _ = pure Nothing
@@ -123,17 +128,13 @@ hsVarCase _ = pure Nothing
 matchCase :: Ghc.Match Ghc.GhcRn (Ghc.LHsExpr Ghc.GhcRn)
           -> EnvReader (Maybe (Ghc.Match Ghc.GhcRn (Ghc.LHsExpr Ghc.GhcRn)))
 matchCase Ghc.Match {Ghc.m_ext, Ghc.m_ctxt, Ghc.m_pats, Ghc.m_grhss} = do
-  let names = extractVarPats m_pats
+  let names = foldMap extractVarPats m_pats
   grhRes <- addScopedVars names $ recurse m_grhss
   pure $ Just
     Ghc.Match { Ghc.m_ext, Ghc.m_ctxt, Ghc.m_pats, Ghc.m_grhss = grhRes }
 
-extractVarPats :: Data a => a -> VarSet
-extractVarPats = Syb.everything (<>) (Syb.mkQ mempty findVarPats)
-  where
-    findVarPats :: Ghc.Pat Ghc.GhcRn -> VarSet
-    findVarPats (Ghc.VarPat _ (Ghc.L _ name)) = mkVarSet [name]
-    findVarPats _otherPat = mempty -- gmapQr (<>) mempty extractVarPats otherPat
+extractVarPats :: Ghc.LPat Ghc.GhcRn -> VarSet
+extractVarPats = mkVarSet . Ghc.collectPatBinders Ghc.CollNoDictBinders
 
 --------------------------------------------------------------------------------
 -- Guarded Right-hand Sides
@@ -157,31 +158,61 @@ dealWithBind :: VarSet
 dealWithBind resultNames = \case
   Ghc.FunBind {..} -> do
     let name = mkVarSet [Ghc.unLoc fun_id]
+        resNameExcl = resultNames M.\\ name
     tell name
-    matchesRes <- lift . addScopedVars (resultNames M.\\ name)
-                $ recurse fun_matches
-    pure Ghc.FunBind { Ghc.fun_matches = matchesRes, .. }
+    (matchesRes, Any containsTarget)
+      <- lift . listen
+       . addScopedVars resNameExcl
+       $ recurse fun_matches
+    -- be sure to use the result names on the right so that they are overriden
+    -- by any shadowing vars inside the expr.
+    let rhsVars
+          | containsTarget
+          = Ghc.mkUniqSet . M.elems
+            . (<> resNameExcl) . mkVarSet
+            $ Ghc.nonDetEltsUniqSet fun_ext
+          | otherwise = fun_ext
+    pure Ghc.FunBind { Ghc.fun_matches = matchesRes, Ghc.fun_ext = rhsVars, .. }
 
   Ghc.PatBind {..} -> do
     let names = extractVarPats pat_lhs
+        resNameExcl = resultNames M.\\ names
     tell names
-    rhsRes <- lift . addScopedVars (resultNames M.\\ names)
-            $ recurse pat_rhs
-    pure Ghc.PatBind { Ghc.pat_rhs = rhsRes, .. }
+    (rhsRes, Any containsTarget)
+      <- lift . listen
+       . addScopedVars resNameExcl
+       $ recurse pat_rhs
+    let rhsVars
+          | containsTarget
+          = Ghc.mkUniqSet . M.elems
+            . (<> resNameExcl) . mkVarSet
+            $ Ghc.nonDetEltsUniqSet pat_ext
+    pure Ghc.PatBind { Ghc.pat_rhs = rhsRes, pat_ext = rhsVars, .. }
 
+  -- Does this not occur in the renamer?
   Ghc.VarBind {..} -> do
     let name = mkVarSet [var_id]
     tell name
-    rhsRes <- lift . addScopedVars (resultNames M.\\ name)
-            $ recurse var_rhs
+    rhsRes
+      <- lift
+       . addScopedVars (resultNames M.\\ name)
+       $ recurse var_rhs
     pure Ghc.VarBind { Ghc.var_rhs = rhsRes, .. }
 
   Ghc.PatSynBind x Ghc.PSB {..} -> do
     let names = extractNames psb_args
+        resNameExcl = resultNames M.\\ names
     tell names
-    defRes <- lift . addScopedVars (resultNames M.\\ names)
-            $ recurse psb_def
-    pure $ Ghc.PatSynBind x Ghc.PSB { psb_def = defRes, .. }
+    (defRes, Any containsTarget)
+      <- lift . listen
+       . addScopedVars resNameExcl
+       $ recurse psb_def
+    let rhsVars
+          | containsTarget
+          = Ghc.mkUniqSet . M.elems
+            . (<> resNameExcl) . mkVarSet
+            $ Ghc.nonDetEltsUniqSet psb_ext
+    pure $ Ghc.PatSynBind x Ghc.PSB { psb_def = defRes, psb_ext = rhsVars, .. }
 
   other -> pure other
 
@@ -199,7 +230,7 @@ dealWithGuards :: [Ghc.LStmt Ghc.GhcRn (Ghc.LHsExpr Ghc.GhcRn)]
                -> WriterT VarSet EnvReader [Ghc.LStmt Ghc.GhcRn (Ghc.LHsExpr Ghc.GhcRn)]
 dealWithGuards [] = pure []
 dealWithGuards (lstmt : rest) = mdo
-  (lstmtRes, names) <- lift . runWriterT $
+  (lstmtRes, names) <- listen $
     for lstmt $ \case
       Ghc.LetStmt x localBinds -> do
         localBindsRes <- dealWithLocalBinds names localBinds
@@ -213,7 +244,6 @@ dealWithGuards (lstmt : rest) = mdo
         pure $ Ghc.BindStmt x lpat bodyRes
 
       other -> pure other
-  tell names
   (lstmtRes :) <$> mapWriterT (addScopedVars names) (dealWithGuards rest)
 
 --------------------------------------------------------------------------------
@@ -226,20 +256,11 @@ hsLetCase :: Ghc.HsExpr Ghc.GhcRn
 hsLetCase (Ghc.HsLet x binds inExpr) = mdo
   (bindsRes, names) <- runWriterT $ dealWithLocalBinds names binds
 
-  !_ <- traceM $ Ghc.showSDocUnsafe $ Ghc.ppr bindsRes
-  -- TODO need to reorder the binds so that anything containing traceVars is
-  -- at the end of the list. Will need to make the bindings recursive if there
-  -- is more than one.
-  -- This is because GHC orders the bindings according to their dependencies.
-  -- Try finding the function that does this and using it here?
-  -- depAnalBinds looks like it might be doing the sorting.
   inExprRes <- addScopedVars names $ recurse inExpr
   pure . Just $
     Ghc.HsLet x bindsRes inExprRes
 hsLetCase _ = pure Nothing
 
--- TODO can use collectHsValBinders CollNoDictBinders to get the resultNames and ditch knot tying
--- and then have the name set to pass to rnLocalValBindsRHS
 dealWithLocalBinds
   :: VarSet
   -> Ghc.HsLocalBinds Ghc.GhcRn
@@ -248,27 +269,42 @@ dealWithLocalBinds resultNames = \case
   hlb@(Ghc.HsValBinds x valBinds) -> case valBinds of
     Ghc.ValBinds{} -> pure hlb
     Ghc.XValBindsLR (Ghc.NValBinds bindPairs sigs) -> do
-      bindPairsRes <-
-        (traverse . traverse . traverse . traverse)
-          (dealWithBind resultNames)
-          bindPairs
-      let input = Ghc.ValBinds _ (snd <$> bindPairsRes) sigs
-      rnValBindsRHS
-      binds_w_dus <-
-        traverse
-          (Ghc.rnLBind (Ghc.mkScopedTvFn sigs))
-          (snd <$> bindsRes)
-      let !(anal_binds, _) = Ghc.depAnalBinds binds_w_dus
+      let binds = Ghc.unionManyBags $ map snd bindPairs :: Ghc.Bag (Ghc.LHsBind Ghc.GhcRn)
+          rearrange ((a, w1), w2) = ((a, w2), w1)
 
-      pure $ Ghc.HsValBinds x (Ghc.XValBindsLR (Ghc.NValBinds anal_binds sigs))
+      (resBindsWithNames, Any containsTarget)
+        <- mapWriterT (fmap rearrange . listen)
+         $ traverse (listen . traverse (dealWithBind resultNames)) binds
+
+      if not containsTarget
+         then pure hlb -- if no bind contained the target then we're done
+         else do
+           -- Need to reorder the binds because the variables references on the
+           -- RHS of some binds have changed
+           let mkTuple (bind, names)
+                 = (bind, M.elems names, foldMap getRhsFreeVars bind)
+               finalResult = depAnalBinds $ mkTuple <$> resBindsWithNames
+           pure $ Ghc.HsValBinds x
+                    $ Ghc.XValBindsLR
+                        $ Ghc.NValBinds finalResult sigs
+
   x@(Ghc.HsIPBinds _ _) -> pure x -- TODO ImplicitParams
+
   other -> pure other
+
+getRhsFreeVars :: Ghc.HsBind Ghc.GhcRn -> Ghc.UniqSet Ghc.Name
+getRhsFreeVars = \case
+  Ghc.FunBind {..} -> fun_ext
+  Ghc.PatBind {..} -> pat_ext
+  Ghc.PatSynBind _ Ghc.PSB {..} -> psb_ext
+  _ -> mempty
 
 --------------------------------------------------------------------------------
 -- Env
 --------------------------------------------------------------------------------
 
-type EnvReader = Reader Env
+-- The writer is for tracking if an inner expression contains the target name
+type EnvReader = WriterT Any (Reader Env)
 
 newtype OrderedSrcSpan = OrderedSrcSpan Ghc.SrcSpan
   deriving Eq
@@ -295,14 +331,27 @@ mkVarSet :: [Ghc.Name] -> VarSet
 mkVarSet names = M.fromList $ (getOccNameFS &&& id) <$> names
 
 addScopedVars :: VarSet -> EnvReader a -> EnvReader a
-addScopedVars names = local $ overVarSet (names <>)
-
--- Need to have access to Names
--- Need to build the var Map
--- Is it okay to use a state monad? Will it be a problem for knot tying?
+addScopedVars names = mapWriterT $ local (overVarSet (names <>))
 
 plugin :: Ghc.Plugin
 plugin = Ghc.defaultPlugin
   { Ghc.pluginRecompile = Ghc.purePlugin
   , Ghc.renamedResultAction = const renameAction
   }
+
+--------------------------------------------------------------------------------
+-- Vendored from GHC
+--------------------------------------------------------------------------------
+
+depAnalBinds :: Ghc.Bag (Ghc.LHsBind Ghc.GhcRn, [Ghc.Name], Ghc.UniqSet Ghc.Name)
+             -> [(Ghc.RecFlag, Ghc.LHsBinds Ghc.GhcRn)]
+depAnalBinds binds_w_dus
+  = map get_binds sccs
+  where
+    sccs = Ghc.depAnal
+             (\(_, defs, _) -> defs)
+             (\(_, _, uses) -> Ghc.nonDetEltsUniqSet uses)
+             (Ghc.bagToList binds_w_dus)
+
+    get_binds (Graph.AcyclicSCC (bind, _, _)) = (Ghc.NonRecursive, Ghc.unitBag bind)
+    get_binds (Graph.CyclicSCC  binds_w_dus)  = (Ghc.Recursive, Ghc.listToBag [b | (b,_,_) <- binds_w_dus])
