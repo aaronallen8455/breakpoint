@@ -15,7 +15,7 @@ testTree =
 --     , testCase "args and where" argsAndWhere
 --     , testCase "let bindings" letBindings
 --     , testCase "nested in let" nestedInLet
---     , testCase "let scoping" letScoping
+    [ testCase "let scoping" letScoping]
 --     , testCase "nested in where" nestedInWhere
 --     , testCase "guard binding" guardBinding
 --     , testCase "pattern guard" patternGuard
@@ -28,7 +28,6 @@ testTree =
     -- case branch binds
     -- binds in a list comprehension
     -- arrow notation bindings
-    []
 
 -- functionArgs :: Assertion
 -- functionArgs = test1 1 True @?= M.fromList [("b", "True"), ("i", "1")]
@@ -111,15 +110,15 @@ testTree =
 -- test10 :: () -> M.Map String String
 -- test10 = \a -> traceVars
 -- 
--- letScoping :: Assertion
--- letScoping = test11 @?= M.fromList [("b", "True"), ("c", "False")]
--- 
--- test11 :: M.Map String String
--- test11 =
---   let a = traceVars
---       b = True
---       c = False
---    in a
+letScoping :: Assertion
+letScoping = test11 @?= M.fromList [("b", "True"), ("c", "False")]
+
+test11 :: M.Map String String
+test11 =
+  let a = traceVars
+      b = True
+      c = False
+   in a
 -- 
 -- casePatBind :: Assertion
 -- casePatBind = test12 @?= M.fromList [("a", "()")]
@@ -128,8 +127,8 @@ testTree =
 -- test12 = case Just () of
 --            Just a -> traceVars
 
-test13 :: M.Map String String
-test13 =
-  let b = True
-      a = M.fromList [("b", show b)]
-   in mempty
+-- test13 :: M.Map String String
+-- test13 =
+--   let b = True
+--       a = traceVars
+--    in mempty

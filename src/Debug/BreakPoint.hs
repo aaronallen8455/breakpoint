@@ -1,3 +1,4 @@
+{-# LANGUAGE BangPatterns #-}
 {-# LANGUAGE RecordWildCards #-}
 {-# LANGUAGE RecursiveDo #-}
 {-# LANGUAGE LambdaCase #-}
@@ -159,11 +160,13 @@ dealWithBind resultNames = \case
   Ghc.FunBind {..} -> do
     let name = mkVarSet [Ghc.unLoc fun_id]
         resNameExcl = resultNames M.\\ name
+    !_ <- traceM "HELLO"
     tell name
     (matchesRes, Any containsTarget)
       <- lift . listen
-       . addScopedVars resNameExcl
+       . addScopedVars mempty -- resNameExcl
        $ recurse fun_matches
+    !_ <- traceM "HELLO2"
     -- be sure to use the result names on the right so that they are overriden
     -- by any shadowing vars inside the expr.
     let rhsVars
