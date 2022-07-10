@@ -55,6 +55,7 @@ executable break-point
 
 test-suite spec
   main-is: Spec.hs
+  other-modules: ApplicativeDo
   hs-source-dirs: test
   build-depends: base, tasty, tasty-hunit, break-point, containers
   type: exitcode-stdio-1.0

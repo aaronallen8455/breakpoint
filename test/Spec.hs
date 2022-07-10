@@ -1,6 +1,3 @@
-{-# LANGUAGE GeneralizedNewtypeDeriving #-}
-{-# LANGUAGE DerivingStrategies #-}
-{-# LANGUAGE ApplicativeDo #-}
 {-# LANGUAGE RecordWildCards #-}
 {-# LANGUAGE Arrows #-}
 import           Control.Arrow
@@ -10,6 +7,7 @@ import           Test.Tasty
 import           Test.Tasty.HUnit
 
 import           Debug.BreakPoint
+import qualified ApplicativeDo as ApDo
 
 main :: IO ()
 main = defaultMain testTree
@@ -36,13 +34,12 @@ testTree =
     , testCase "arrow notation" arrowNotation
     , testCase "record field bindings" recFieldBindings
     , testCase "record wild cards" recWildCards
-    , testCase "applicative do bindings" applicativeDoBindings
+    , ApDo.testTree
     ]
     -- TODO
     -- arrow notation bindings
     -- Implicit Params
     -- Pattern synonyms
-    -- Applicative do
     -- recursive do
 
 functionArgs :: Assertion
@@ -144,12 +141,13 @@ test12 = case Just () of
            Just a -> traceVars
 
 monadicBinds :: Assertion
-monadicBinds = test13 @?= M.fromList [("a", "True"), ("b", "False")]
+monadicBinds = test13 @?= M.fromList [("a", "True"), ("b", "False"), ("x", "5")]
 
 test13 :: M.Map String String
 test13 = fromMaybe mempty $ do
   a <- Just True
   b <- Just False
+  let x = 5
   pure traceVars
 
 monadicBindsScoped :: Assertion
@@ -158,7 +156,7 @@ monadicBindsScoped = test14 @?= M.fromList [("a", "True")]
 test14 :: M.Map String String
 test14 = fromMaybe mempty $ do
   a <- Just True
-  let m = const traceVars a -- NB: need to reference 'a' here b/c of ApplicativeDo
+  let m = traceVars
   b <- Just False
   pure m
 
@@ -198,15 +196,3 @@ recWildCards = test19 MkRec {fld=True} @?= M.fromList [("fld", "True")]
 test19 :: Rec -> M.Map String String
 test19 MkRec{..} = traceVars
 
-applicativeDoBindings :: Assertion
-applicativeDoBindings =
-  runM test20 @?= Just (M.fromList [("a", "True"), ("b", "False")])
-
-newtype M a = M { runM :: Maybe a }
-  deriving newtype (Functor, Applicative)
-
-test20 :: Applicative m => m (M.Map String String)
-test20 = do
-  let b = False
-  a <- pure True
-  return traceVars
