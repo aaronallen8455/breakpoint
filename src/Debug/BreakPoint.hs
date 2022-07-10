@@ -1,12 +1,10 @@
 {-# LANGUAGE RecordWildCards #-}
-{-# LANGUAGE RecursiveDo #-}
 {-# LANGUAGE LambdaCase #-}
 {-# LANGUAGE TypeApplications #-}
 {-# LANGUAGE RankNTypes #-}
 {-# LANGUAGE ScopedTypeVariables #-}
 {-# LANGUAGE FlexibleContexts #-}
 {-# LANGUAGE GADTs #-}
-{-# LANGUAGE NamedFieldPuns #-}
 module Debug.BreakPoint
   ( plugin
   , traceVars
@@ -15,14 +13,10 @@ module Debug.BreakPoint
 import           Control.Applicative ((<|>), empty)
 import           Control.Arrow ((&&&))
 import           Control.Monad.Reader
-import           Control.Monad.Trans.Class
 import           Control.Monad.Trans.Maybe
 import           Control.Monad.Trans.Writer.CPS
 import           Data.Coerce
 import           Data.Data
-import qualified Data.DList as DL
-import           Data.Foldable
-import           Data.Functor.Identity
 import qualified Data.Generics as Syb
 import qualified Data.Graph as Graph
 import qualified Data.Map.Lazy as M
@@ -31,8 +25,15 @@ import           Data.Traversable (for)
 
 import qualified Debug.BreakPoint.GhcFacade as Ghc
 
+-- captureVars, collectVars?
 traceVars :: M.Map String String
 traceVars = mempty
+
+plugin :: Ghc.Plugin
+plugin = Ghc.defaultPlugin
+  { Ghc.pluginRecompile = Ghc.purePlugin
+  , Ghc.renamedResultAction = const renameAction
+  }
 
 renameAction
   :: Ghc.TcGblEnv
@@ -56,11 +57,7 @@ renameAction gblEnv group = do
 
   let (group', _) =
         runReader (runWriterT $ recurse group)
-          MkEnv { varSet = mempty
-                , traceVarsName
-                , showName
-                , fromListName
-                }
+          MkEnv { varSet = mempty, .. }
 
   pure (gblEnv, group')
 
@@ -79,6 +76,7 @@ transform a = runMaybeT
     <|> wrap hsLetCase
     <|> wrap grhsCase
     <|> wrap hsDoCase
+    <|> wrap hsProcCase
   where
     wrap :: forall b. Data b
          => (b -> EnvReader (Maybe b))
@@ -126,11 +124,11 @@ hsVarCase _ = pure Nothing
 
 matchCase :: Ghc.Match Ghc.GhcRn (Ghc.LHsExpr Ghc.GhcRn)
           -> EnvReader (Maybe (Ghc.Match Ghc.GhcRn (Ghc.LHsExpr Ghc.GhcRn)))
-matchCase Ghc.Match {Ghc.m_ext, Ghc.m_ctxt, Ghc.m_pats, Ghc.m_grhss} = do
+matchCase Ghc.Match {..} = do
   let names = foldMap extractVarPats m_pats
   grhRes <- addScopedVars names $ recurse m_grhss
   pure $ Just
-    Ghc.Match { Ghc.m_ext, Ghc.m_ctxt, Ghc.m_pats, Ghc.m_grhss = grhRes }
+    Ghc.Match { Ghc.m_grhss = grhRes, .. }
 
 extractVarPats :: Ghc.LPat Ghc.GhcRn -> VarSet
 extractVarPats = mkVarSet . Ghc.collectPatBinders Ghc.CollNoDictBinders
@@ -141,13 +139,13 @@ extractVarPats = mkVarSet . Ghc.collectPatBinders Ghc.CollNoDictBinders
 
 grhssCase :: Ghc.GRHSs Ghc.GhcRn (Ghc.LHsExpr Ghc.GhcRn)
          -> EnvReader (Maybe (Ghc.GRHSs Ghc.GhcRn (Ghc.LHsExpr Ghc.GhcRn)))
-grhssCase Ghc.GRHSs { Ghc.grhssExt, Ghc.grhssGRHSs, Ghc.grhssLocalBinds } = mdo
+grhssCase Ghc.GRHSs {..} = do
   (localBindsRes, names)
     <- dealWithLocalBinds grhssLocalBinds
 
   grhsRes <- addScopedVars names $ recurse grhssGRHSs
   pure $ Just
-    Ghc.GRHSs { Ghc.grhssExt, Ghc.grhssGRHSs = grhsRes, Ghc.grhssLocalBinds }
+    Ghc.GRHSs { Ghc.grhssGRHSs = grhsRes, .. }
 
 dealWithBind :: VarSet
              -> (Ghc.LHsBind Ghc.GhcRn, [Ghc.Name])
@@ -214,7 +212,7 @@ grhsCase (Ghc.GRHS x guards body) = do
 -- Let Binds (Non-do)
 --------------------------------------------------------------------------------
 
--- TODO combine with hsVar case to allow for "quick failure"
+-- TODO could combine with hsVar case to allow for "quick failure"
 hsLetCase :: Ghc.HsExpr Ghc.GhcRn
           -> EnvReader (Maybe (Ghc.HsExpr Ghc.GhcRn))
 hsLetCase (Ghc.HsLet x localBinds inExpr) = do
@@ -307,7 +305,29 @@ dealWithStmt = \case
     tell names
     pure $ Ghc.LetStmt x bindsRes
 
+  s@(Ghc.ApplicativeStmt x pairs mbJoin) -> do
+    let dealWithAppArg = \case
+          a@Ghc.ApplicativeArgOne{..} -> do
+            tell $ extractVarPats app_arg_pattern
+            pure a
+          a@Ghc.ApplicativeArgMany{..} -> do
+            tell $ extractVarPats bv_pattern
+            (stmtsRes, _) <- lift . runWriterT $ dealWithStatements app_stmts
+            pure a {Ghc.app_stmts = stmtsRes}
+    pairsRes <- (traverse . traverse) dealWithAppArg pairs
+    pure $ Ghc.ApplicativeStmt x pairsRes mbJoin
+
   other -> lift $ gmapM recurse other
+
+--------------------------------------------------------------------------------
+-- Arrow Notation
+--------------------------------------------------------------------------------
+
+-- TODO
+hsProcCase :: Ghc.HsExpr Ghc.GhcRn
+           -> EnvReader (Maybe (Ghc.HsExpr Ghc.GhcRn))
+hsProcCase expr@(Ghc.HsProc x lpat cmdTop) = pure $ Just expr
+hsProcCase _ = pure Nothing
 
 --------------------------------------------------------------------------------
 -- Env
@@ -342,12 +362,6 @@ mkVarSet names = M.fromList $ (getOccNameFS &&& id) <$> names
 
 addScopedVars :: VarSet -> EnvReader a -> EnvReader a
 addScopedVars names = mapWriterT $ local (overVarSet (names <>))
-
-plugin :: Ghc.Plugin
-plugin = Ghc.defaultPlugin
-  { Ghc.pluginRecompile = Ghc.purePlugin
-  , Ghc.renamedResultAction = const renameAction
-  }
 
 --------------------------------------------------------------------------------
 -- Vendored from GHC

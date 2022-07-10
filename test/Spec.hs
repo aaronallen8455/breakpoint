@@ -1,3 +1,9 @@
+{-# LANGUAGE GeneralizedNewtypeDeriving #-}
+{-# LANGUAGE DerivingStrategies #-}
+{-# LANGUAGE ApplicativeDo #-}
+{-# LANGUAGE RecordWildCards #-}
+{-# LANGUAGE Arrows #-}
+import           Control.Arrow
 import qualified Data.Map as M
 import           Data.Maybe
 import           Test.Tasty
@@ -26,10 +32,18 @@ testTree =
     , testCase "monadic binds" monadicBinds
     , testCase "monadic binds scoped" monadicBindsScoped
     , testCase "do block let bind" doBlockLetBind
+    , testCase "list comprehension" listComprehension
+    , testCase "arrow notation" arrowNotation
+    , testCase "record field bindings" recFieldBindings
+    , testCase "record wild cards" recWildCards
+    , testCase "applicative do bindings" applicativeDoBindings
     ]
     -- TODO
-    -- binds in a list comprehension
     -- arrow notation bindings
+    -- Implicit Params
+    -- Pattern synonyms
+    -- Applicative do
+    -- recursive do
 
 functionArgs :: Assertion
 functionArgs = test1 1 True @?= M.fromList [("b", "True"), ("i", "1")]
@@ -144,7 +158,7 @@ monadicBindsScoped = test14 @?= M.fromList [("a", "True")]
 test14 :: M.Map String String
 test14 = fromMaybe mempty $ do
   a <- Just True
-  let m = traceVars
+  let m = const traceVars a -- NB: need to reference 'a' here b/c of ApplicativeDo
   b <- Just False
   pure m
 
@@ -156,3 +170,43 @@ test15 = fromMaybe mempty $ do
   let a = True
   b <- Just False
   pure traceVars
+
+listComprehension :: Assertion
+listComprehension = test16 @?= M.fromList [("a", "True"), ("b", "False")]
+
+test16 = head [ traceVars | let b = False, a <- [True] ]
+
+arrowNotation :: Assertion
+arrowNotation = test17 @?= M.fromList [("a", "2"), ("b", "0")]
+
+test17 = go 1 where
+  go = proc x -> do
+    a <- succ -< x
+    let b = pred x
+    returnA -< traceVars
+
+recFieldBindings :: Assertion
+recFieldBindings = test18 MkRec {fld=True} @?= M.fromList [("a", "True")]
+
+data Rec = MkRec { fld :: Bool }
+test18 :: Rec -> M.Map String String
+test18 MkRec { fld = a } = traceVars
+
+recWildCards :: Assertion
+recWildCards = test19 MkRec {fld=True} @?= M.fromList [("fld", "True")]
+
+test19 :: Rec -> M.Map String String
+test19 MkRec{..} = traceVars
+
+applicativeDoBindings :: Assertion
+applicativeDoBindings =
+  runM test20 @?= Just (M.fromList [("a", "True"), ("b", "False")])
+
+newtype M a = M { runM :: Maybe a }
+  deriving newtype (Functor, Applicative)
+
+test20 :: Applicative m => m (M.Map String String)
+test20 = do
+  let b = False
+  a <- pure True
+  return traceVars
