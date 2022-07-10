@@ -1,4 +1,5 @@
 import qualified Data.Map as M
+import           Data.Maybe
 import           Test.Tasty
 import           Test.Tasty.HUnit
 
@@ -22,11 +23,11 @@ testTree =
     , testCase "lambda bind" lambdaBind
     , testCase "no let escape" noLetEscape
     , testCase "case pattern bind" casePatBind
+    , testCase "monadic binds" monadicBinds
+    , testCase "monadic binds scoped" monadicBindsScoped
+    , testCase "do block let bind" doBlockLetBind
     ]
     -- TODO
-    -- monadic binds
-    -- let bind in do
-    -- case branch binds
     -- binds in a list comprehension
     -- arrow notation bindings
 
@@ -127,3 +128,31 @@ casePatBind = test12 @?= M.fromList [("a", "()")]
 test12 :: M.Map String String
 test12 = case Just () of
            Just a -> traceVars
+
+monadicBinds :: Assertion
+monadicBinds = test13 @?= M.fromList [("a", "True"), ("b", "False")]
+
+test13 :: M.Map String String
+test13 = fromMaybe mempty $ do
+  a <- Just True
+  b <- Just False
+  pure traceVars
+
+monadicBindsScoped :: Assertion
+monadicBindsScoped = test14 @?= M.fromList [("a", "True")]
+
+test14 :: M.Map String String
+test14 = fromMaybe mempty $ do
+  a <- Just True
+  let m = traceVars
+  b <- Just False
+  pure m
+
+doBlockLetBind :: Assertion
+doBlockLetBind = test15 @?= M.fromList [("a", "True"), ("b", "False")]
+
+test15 :: M.Map String String
+test15 = fromMaybe mempty $ do
+  let a = True
+  b <- Just False
+  pure traceVars

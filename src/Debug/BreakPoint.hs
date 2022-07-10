@@ -78,6 +78,7 @@ transform a = runMaybeT
     <|> wrap grhssCase
     <|> wrap hsLetCase
     <|> wrap grhsCase
+    <|> wrap hsDoCase
   where
     wrap :: forall b. Data b
          => (b -> EnvReader (Maybe b))
@@ -202,36 +203,12 @@ dealWithBind resultNames (lbind, names) = for lbind $ \bind -> do
 
     other -> pure other
 
-extractNames :: Data a => a -> VarSet
-extractNames = mkVarSet . Syb.listify (const True)
-
 grhsCase :: Ghc.GRHS Ghc.GhcRn (Ghc.LHsExpr Ghc.GhcRn)
          -> EnvReader (Maybe (Ghc.GRHS Ghc.GhcRn (Ghc.LHsExpr Ghc.GhcRn)))
 grhsCase (Ghc.GRHS x guards body) = do
-  (guardsRes, names) <- runWriterT $ dealWithGuards guards
+  (guardsRes, names) <- runWriterT $ dealWithStatements guards
   bodyRes <- addScopedVars names $ recurse body
   pure . Just $ Ghc.GRHS x guardsRes bodyRes
-
-dealWithGuards :: [Ghc.LStmt Ghc.GhcRn (Ghc.LHsExpr Ghc.GhcRn)]
-               -> WriterT VarSet EnvReader [Ghc.LStmt Ghc.GhcRn (Ghc.LHsExpr Ghc.GhcRn)]
-dealWithGuards [] = pure []
-dealWithGuards (lstmt : rest) = mdo
-  (lstmtRes, names) <- listen $
-    for lstmt $ \case
-      Ghc.LetStmt x localBinds -> do
-        (localBindsRes, names) <- lift $ dealWithLocalBinds localBinds
-        tell names
-        pure $ Ghc.LetStmt x localBindsRes
-
-      -- pattern guards
-      Ghc.BindStmt x lpat body -> do
-        let names = extractVarPats lpat
-        tell names
-        bodyRes <- lift $ recurse body
-        pure $ Ghc.BindStmt x lpat bodyRes
-
-      other -> pure other
-  (lstmtRes :) <$> mapWriterT (addScopedVars names) (dealWithGuards rest)
 
 --------------------------------------------------------------------------------
 -- Let Binds (Non-do)
@@ -295,6 +272,42 @@ getRhsFreeVars = \case
   Ghc.PatBind {..} -> pat_ext
   Ghc.PatSynBind _ Ghc.PSB {..} -> psb_ext
   _ -> mempty
+
+--------------------------------------------------------------------------------
+-- Do Block
+--------------------------------------------------------------------------------
+
+hsDoCase :: Ghc.HsExpr Ghc.GhcRn
+         -> EnvReader (Maybe (Ghc.HsExpr Ghc.GhcRn))
+-- TODO look at the context to determine if it's a recursive do
+hsDoCase (Ghc.HsDo x ctx lStmts) = do
+  (stmtsRes, _) <- runWriterT $ for lStmts dealWithStatements
+  pure . Just $ Ghc.HsDo x ctx stmtsRes
+hsDoCase _ = pure Nothing
+
+dealWithStatements
+  :: [Ghc.ExprLStmt Ghc.GhcRn]
+  -> WriterT VarSet EnvReader [Ghc.ExprLStmt Ghc.GhcRn]
+dealWithStatements [] = pure []
+dealWithStatements (lstmt : xs) = do
+  (stmtRes, names) <- listen $ traverse dealWithStmt lstmt
+  (stmtRes :) <$> mapWriterT (addScopedVars names) (dealWithStatements xs)
+
+dealWithStmt :: Ghc.ExprStmt Ghc.GhcRn
+             -> WriterT VarSet EnvReader (Ghc.ExprStmt Ghc.GhcRn)
+dealWithStmt = \case
+  Ghc.BindStmt x lpat body -> do
+    let names = extractVarPats lpat
+    tell names
+    bodyRes <- lift . addScopedVars names $ recurse body
+    pure $ Ghc.BindStmt x lpat bodyRes
+
+  Ghc.LetStmt x localBinds -> do
+    (bindsRes, names) <- lift $ dealWithLocalBinds localBinds
+    tell names
+    pure $ Ghc.LetStmt x bindsRes
+
+  other -> lift $ gmapM recurse other
 
 --------------------------------------------------------------------------------
 -- Env
