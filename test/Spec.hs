@@ -31,13 +31,12 @@ testTree =
     , testCase "monadic binds scoped" monadicBindsScoped
     , testCase "do block let bind" doBlockLetBind
     , testCase "list comprehension" listComprehension
-    , testCase "arrow notation" arrowNotation
+    ,  testCase "arrow notation" arrowNotation
     , testCase "record field bindings" recFieldBindings
     , testCase "record wild cards" recWildCards
     , ApDo.testTree
     ]
     -- TODO
-    -- arrow notation bindings
     -- Implicit Params
     -- Pattern synonyms
     -- recursive do
@@ -175,8 +174,9 @@ listComprehension = test16 @?= M.fromList [("a", "True"), ("b", "False")]
 test16 = head [ traceVars | let b = False, a <- [True] ]
 
 arrowNotation :: Assertion
-arrowNotation = test17 @?= M.fromList [("a", "2"), ("b", "0")]
+arrowNotation = test17 @?= M.fromList [("a", "2"), ("b", "0"), ("x", "1")]
 
+test17 :: M.Map String String
 test17 = go 1 where
   go = proc x -> do
     a <- succ -< x

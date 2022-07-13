@@ -1,3 +1,4 @@
+{-# LANGUAGE BangPatterns #-}
 {-# LANGUAGE RecordWildCards #-}
 {-# LANGUAGE LambdaCase #-}
 {-# LANGUAGE TypeApplications #-}
@@ -24,6 +25,8 @@ import           Data.Monoid (Any(..))
 import           Data.Traversable (for)
 
 import qualified Debug.BreakPoint.GhcFacade as Ghc
+
+import           Debug.Trace
 
 -- captureVars, collectVars?
 traceVars :: M.Map String String
@@ -145,7 +148,7 @@ grhssCase Ghc.GRHSs {..} = do
 
   grhsRes <- addScopedVars names $ recurse grhssGRHSs
   pure $ Just
-    Ghc.GRHSs { Ghc.grhssGRHSs = grhsRes, .. }
+    Ghc.GRHSs { Ghc.grhssGRHSs = grhsRes, grhssLocalBinds = localBindsRes, .. }
 
 dealWithBind :: VarSet
              -> (Ghc.LHsBind Ghc.GhcRn, [Ghc.Name])
@@ -284,15 +287,17 @@ hsDoCase (Ghc.HsDo x ctx lStmts) = do
 hsDoCase _ = pure Nothing
 
 dealWithStatements
-  :: [Ghc.ExprLStmt Ghc.GhcRn]
-  -> WriterT VarSet EnvReader [Ghc.ExprLStmt Ghc.GhcRn]
+  :: (Data body, Data (Ghc.Stmt Ghc.GhcRn body))
+  => [Ghc.LStmt Ghc.GhcRn body]
+  -> WriterT VarSet EnvReader [Ghc.LStmt Ghc.GhcRn body]
 dealWithStatements [] = pure []
 dealWithStatements (lstmt : xs) = do
   (stmtRes, names) <- listen $ traverse dealWithStmt lstmt
   (stmtRes :) <$> mapWriterT (addScopedVars names) (dealWithStatements xs)
 
-dealWithStmt :: Ghc.ExprStmt Ghc.GhcRn
-             -> WriterT VarSet EnvReader (Ghc.ExprStmt Ghc.GhcRn)
+dealWithStmt :: (Data (Ghc.Stmt Ghc.GhcRn body), Data body)
+             => Ghc.Stmt Ghc.GhcRn body
+             -> WriterT VarSet EnvReader (Ghc.Stmt Ghc.GhcRn body)
 dealWithStmt = \case
   Ghc.BindStmt x lpat body -> do
     let names = extractVarPats lpat
@@ -323,10 +328,24 @@ dealWithStmt = \case
 -- Arrow Notation
 --------------------------------------------------------------------------------
 
--- TODO
 hsProcCase :: Ghc.HsExpr Ghc.GhcRn
            -> EnvReader (Maybe (Ghc.HsExpr Ghc.GhcRn))
-hsProcCase expr@(Ghc.HsProc x lpat cmdTop) = pure $ Just expr
+hsProcCase expr@(Ghc.HsProc x1 lpat cmdTop) = do
+  let inputNames = extractVarPats lpat
+  runMaybeT $ do
+    cmdTopRes <- for cmdTop $ \case
+      Ghc.HsCmdTop x2 lcmd -> do
+        cmdRes <- for lcmd $ \case
+          Ghc.HsCmdDo x3 lstmts -> do
+            (stmtsRes, ns) <- lift . runWriterT . for lstmts $ \stmts -> do
+              tell inputNames
+              mapWriterT (addScopedVars inputNames) $ dealWithStatements stmts
+            pure $ Ghc.HsCmdDo x3 stmtsRes
+
+          other -> empty -- TODO what other cases should be handled?
+
+        pure $ Ghc.HsCmdTop x2 cmdRes
+    pure $ Ghc.HsProc x1 lpat cmdTopRes
 hsProcCase _ = pure Nothing
 
 --------------------------------------------------------------------------------
