@@ -1,3 +1,4 @@
+{-# LANGUAGE FlexibleInstances #-}
 {-# LANGUAGE UndecidableInstances #-}
 {-# LANGUAGE GeneralizedNewtypeDeriving #-}
 {-# LANGUAGE DerivingStrategies #-}
@@ -14,6 +15,7 @@
 module Debug.BreakPoint
   ( plugin
   , captureVars
+  , showLev
   ) where
 
 import           Control.Applicative ((<|>), empty)
@@ -56,13 +58,14 @@ renameAction gblEnv group = do
   -- TODO this could fail if base if not a dependency?
   Ghc.Found _ preludeMod <- liftIO $
     Ghc.findImportedModule hscEnv (Ghc.mkModuleName "GHC.Show") (Just $ Ghc.fsLit "base")
-  -- TODO This fails if 'containers' is not a dep
+  -- TODO This fails if 'containers' is not a dep. Can it be reexported through
+  -- this module?
   Ghc.Found _ mapMod <- liftIO $
     Ghc.findImportedModule hscEnv (Ghc.mkModuleName "Data.Map.Internal") (Just $ Ghc.fsLit "containers")
 
   -- TODO cache these lookups somehow?
   captureVarsName <- Ghc.lookupOrig breakPointMod (Ghc.mkVarOcc "captureVars")
-  showName <- Ghc.lookupOrig preludeMod (Ghc.mkVarOcc "show")
+  showLevName <- Ghc.lookupOrig breakPointMod (Ghc.mkVarOcc "showLev")
   fromListName <- Ghc.lookupOrig mapMod (Ghc.mkVarOcc "fromAscList")
   mkShowWrapperName <- Ghc.lookupOrig breakPointMod (Ghc.mkVarOcc "MkShowWrapper")
 
@@ -107,7 +110,7 @@ hsVarCase (Ghc.HsVar _ (Ghc.L _ name)) = do
   matchesTarget <- lift . asks $ (== name) . captureVarsName
   if matchesTarget
      then do
-       nameShow <- lift $ asks showName
+       showName <- lift $ asks showLevName
        fromListName <- lift $ asks fromListName
        names <- lift $ asks varSet
        showWrapperName <- lift $ asks mkShowWrapperName
@@ -115,7 +118,7 @@ hsVarCase (Ghc.HsVar _ (Ghc.L _ name)) = do
        let mkTuple (Ghc.LexicalFastString varStr, n) =
              Ghc.mkLHsTupleExpr
                [ Ghc.nlHsLit . Ghc.mkHsString $ Ghc.unpackFS varStr
-               , Ghc.nlHsApp (Ghc.nlHsVar nameShow) $
+               , Ghc.nlHsApp (Ghc.nlHsVar showName) $
                    Ghc.nlHsApp (Ghc.nlHsVar showWrapperName) (Ghc.nlHsVar n)
                ]
                Ghc.NoExtField
@@ -378,7 +381,7 @@ type VarSet = M.Map Ghc.LexicalFastString Ghc.Name
 data Env = MkEnv
   { varSet :: !VarSet
   , captureVarsName :: !Ghc.Name
-  , showName :: !Ghc.Name
+  , showLevName :: !Ghc.Name
   , fromListName :: !Ghc.Name
   , mkShowWrapperName :: !Ghc.Name
   }
@@ -420,6 +423,7 @@ data TcPluginNames =
   MkTcPluginNames
     { showLevClassName :: !Ghc.Name
     , showClass :: !Ghc.Class
+    , succeedClass :: !Ghc.Class
     -- , mkShowWrapperName :: !Ghc.Name
     }
 
@@ -440,6 +444,7 @@ initTcPlugin = do
   showLevClassName <- Plugin.lookupOrig breakPointMod (Ghc.mkClsOcc "ShowLev")
   -- mkShowWrapperName <- Plugin.lookupOrig breakPointMod (Ghc.mkVarOcc "MkShowWrapper")
   showClass <- Plugin.tcLookupClass =<< Plugin.lookupOrig showMod (Ghc.mkClsOcc "Show")
+  succeedClass <- Plugin.tcLookupClass =<< Plugin.lookupOrig breakPointMod (Ghc.mkClsOcc "Succeed")
 
   pure MkTcPluginNames{..}
 
@@ -466,7 +471,11 @@ solver names given derived wanted = do
           let dfun = Ghc.is_dfun clsInst
               (vars, subclasses, insts) = Ghc.tcSplitSigmaTy $ Ghc.idType dfun
           if null subclasses
-             then pure (Ghc.evDFunApp dfun [] [], ct)
+             then do
+               let Ghc.EvExpr showDict = Ghc.evDFunApp dfun [] []
+                   Right (succInst, _) = Ghc.lookupUniqueInstEnv instEnvs (succeedClass names) [ty]
+                   result = liftDict succInst ty showDict
+               pure (result, ct)
              else do
                unshowableDict <- Ghc.unsafeTcPluginTcM $ buildUnshowableDict ty
                pure (unshowableDict, ct)
@@ -485,6 +494,9 @@ buildUnshowableDict ty = do
   str <- Ghc.mkStringExpr . Ghc.showSDocUnsafe $ Ghc.ppr ty
   pure . Ghc.EvExpr $ Ghc.mkCoreLams [Ghc.mkWildValBinder Ghc.oneDataConTy ty] str
 
+liftDict :: Ghc.ClsInst -> Ghc.Type -> Ghc.EvExpr -> Ghc.EvTerm
+liftDict succ_inst ty dict = Ghc.evDFunApp (Ghc.is_dfun succ_inst) [ty] [dict]
+
 --------------------------------------------------------------------------------
 -- Showing
 --------------------------------------------------------------------------------
@@ -497,8 +509,15 @@ newtype ShowWrapper a = MkShowWrapper a
 
 instance ShowLev LiftedRep a => Show (ShowWrapper a)
 
+class Succeed a where
+  succeed :: a -> String
+
+instance Show a => Succeed a where
+  succeed = show
+
 -- Could be less work to have a newtype wrapper that derives Show and then only
 -- need to handle the cases where a show instance is not found for something.
 -- In this case would you only get wanted for things that truly don't have
 -- Show instances or would you get them for things that have a super class
--- constraint as well?
+-- constraint as well? Maybe but can't use Show because it's not levity
+-- polymorphic
