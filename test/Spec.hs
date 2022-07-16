@@ -45,13 +45,13 @@ functionArgs :: Assertion
 functionArgs = test1 1 True @?= M.fromList [("b", "True"), ("i", "1")]
 
 test1 :: Int -> Bool -> M.Map String String
-test1 i b = traceVars
+test1 i b = captureVars
 
 whereBinds :: Assertion
 whereBinds = test2 @?= M.fromList [("a", "1"), ("b", "True")]
 
 test2 :: M.Map String String
-test2 = traceVars
+test2 = captureVars
   where a = 1 :: Int
         b = True
 
@@ -59,7 +59,7 @@ argsAndWhere :: Assertion
 argsAndWhere = test3 1 @?= M.fromList [("a", "1"), ("b", "2"), ("c", "3")]
 
 test3 :: Int -> M.Map String String
-test3 a = traceVars
+test3 a = captureVars
   where b = 2 :: Int
         c = 3 :: Int
 
@@ -71,7 +71,7 @@ test4 :: M.Map String String
 test4 =
   let a = True
       b = 1 :: Int
-   in traceVars
+   in captureVars
 
 nestedInLet :: Assertion
 nestedInLet = test5 1 @?= M.fromList [("a", "1"), ("b", "2"), ("c", "3")]
@@ -81,7 +81,7 @@ test5 a =
   let x =
         let b = 2
             c = 3
-         in traceVars
+         in captureVars
    in x
 
 noLetEscape :: Assertion
@@ -93,13 +93,13 @@ test6 =
         let b = True
             c = False
          in ()
-   in traceVars
+   in captureVars
 
 nestedInWhere :: Assertion
 nestedInWhere = test7 @?= M.fromList [("a", "()")]
 
 test7 :: M.Map String String
-test7 = traceVars where
+test7 = captureVars where
   a = () where
           b = True
           c = False
@@ -108,19 +108,19 @@ guardBinding :: Assertion
 guardBinding = test8 @?= M.fromList [("a", "()"), ("b", "()")]
 
 test8 :: M.Map String String
-test8 | let a = (), let b = a = traceVars
+test8 | let a = (), let b = a = captureVars
 
 patternGuard :: Assertion
 patternGuard = test9 @?= M.fromList [("a", "()")]
 
 test9 :: M.Map String String
-test9 | Just a <- Just () = traceVars
+test9 | Just a <- Just () = captureVars
 
 lambdaBind :: Assertion
 lambdaBind = test10 () @?= M.fromList [("a", "()")]
 
 test10 :: () -> M.Map String String
-test10 = \a -> traceVars
+test10 = \a -> captureVars
 
 letScoping :: Assertion
 letScoping = test11 @?= M.fromList [("b", "True"), ("c", "False")]
@@ -128,7 +128,7 @@ letScoping = test11 @?= M.fromList [("b", "True"), ("c", "False")]
 test11 :: M.Map String String
 test11 =
   let b = True
-      a = traceVars
+      a = captureVars
       c = False
    in a
 
@@ -137,7 +137,7 @@ casePatBind = test12 @?= M.fromList [("a", "()")]
 
 test12 :: M.Map String String
 test12 = case Just () of
-           Just a -> traceVars
+           Just a -> captureVars
 
 monadicBinds :: Assertion
 monadicBinds = test13 @?= M.fromList [("a", "True"), ("b", "False"), ("x", "5")]
@@ -147,7 +147,7 @@ test13 = fromMaybe mempty $ do
   a <- Just True
   b <- Just False
   let x = 5
-  pure traceVars
+  pure captureVars
 
 monadicBindsScoped :: Assertion
 monadicBindsScoped = test14 @?= M.fromList [("a", "True")]
@@ -155,7 +155,7 @@ monadicBindsScoped = test14 @?= M.fromList [("a", "True")]
 test14 :: M.Map String String
 test14 = fromMaybe mempty $ do
   a <- Just True
-  let m = traceVars
+  let m = captureVars
   b <- Just False
   pure m
 
@@ -166,12 +166,12 @@ test15 :: M.Map String String
 test15 = fromMaybe mempty $ do
   let a = True
   b <- Just False
-  pure traceVars
+  pure captureVars
 
 listComprehension :: Assertion
 listComprehension = test16 @?= M.fromList [("a", "True"), ("b", "False")]
 
-test16 = head [ traceVars | let b = False, a <- [True] ]
+test16 = head [ captureVars | let b = False, a <- [True] ]
 
 arrowNotation :: Assertion
 arrowNotation = test17 @?= M.fromList [("a", "2"), ("b", "0"), ("x", "1")]
@@ -181,18 +181,18 @@ test17 = go 1 where
   go = proc x -> do
     a <- succ -< x
     let b = pred x
-    returnA -< traceVars
+    returnA -< captureVars
 
 recFieldBindings :: Assertion
 recFieldBindings = test18 MkRec {fld=True} @?= M.fromList [("a", "True")]
 
 data Rec = MkRec { fld :: Bool }
 test18 :: Rec -> M.Map String String
-test18 MkRec { fld = a } = traceVars
+test18 MkRec { fld = a } = captureVars
 
 recWildCards :: Assertion
 recWildCards = test19 MkRec {fld=True} @?= M.fromList [("fld", "True")]
 
 test19 :: Rec -> M.Map String String
-test19 MkRec{..} = traceVars
+test19 MkRec{..} = captureVars
 

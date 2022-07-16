@@ -31,7 +31,7 @@ test1 :: Applicative m => m (M.Map String String)
 test1 = do
   let b = False
   a <- pure True
-  return traceVars
+  return captureVars
 
 monadicBindsScoped :: Assertion
 monadicBindsScoped = test2 @?= M.fromList [("a", "True")]
@@ -39,7 +39,7 @@ monadicBindsScoped = test2 @?= M.fromList [("a", "True")]
 test2 :: M.Map String String
 test2 = fromMaybe mempty $ do
   a <- Just True
-  let m = const traceVars a -- NB: need to reference 'a' here b/c of ApplicativeDo
+  let m = const captureVars a -- NB: need to reference 'a' here b/c of ApplicativeDo
   b <- Just False
   pure m
 

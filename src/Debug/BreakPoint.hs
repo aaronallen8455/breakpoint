@@ -1,4 +1,9 @@
-{-# LANGUAGE BangPatterns #-}
+{-# LANGUAGE UndecidableInstances #-}
+{-# LANGUAGE GeneralizedNewtypeDeriving #-}
+{-# LANGUAGE DerivingStrategies #-}
+{-# LANGUAGE MultiParamTypeClasses #-}
+{-# LANGUAGE UnliftedNewtypes #-}
+{-# LANGUAGE PolyKinds #-}
 {-# LANGUAGE RecordWildCards #-}
 {-# LANGUAGE LambdaCase #-}
 {-# LANGUAGE TypeApplications #-}
@@ -8,7 +13,7 @@
 {-# LANGUAGE GADTs #-}
 module Debug.BreakPoint
   ( plugin
-  , traceVars
+  , captureVars
   ) where
 
 import           Control.Applicative ((<|>), empty)
@@ -18,24 +23,26 @@ import           Control.Monad.Trans.Maybe
 import           Control.Monad.Trans.Writer.CPS
 import           Data.Coerce
 import           Data.Data
-import qualified Data.Generics as Syb
 import qualified Data.Graph as Graph
 import qualified Data.Map.Lazy as M
+import           Data.Maybe
 import           Data.Monoid (Any(..))
 import           Data.Traversable (for)
+import           GHC.Exts (TYPE, RuntimeRep(..), LiftedRep)
+import qualified GHC.Tc.Plugin as Plugin
 
 import qualified Debug.BreakPoint.GhcFacade as Ghc
 
 import           Debug.Trace
 
--- captureVars, collectVars?
-traceVars :: M.Map String String
-traceVars = mempty
+captureVars :: M.Map String String
+captureVars = mempty
 
 plugin :: Ghc.Plugin
 plugin = Ghc.defaultPlugin
   { Ghc.pluginRecompile = Ghc.purePlugin
   , Ghc.renamedResultAction = const renameAction
+  , Ghc.tcPlugin = const $ Just tcPlugin
   }
 
 renameAction
@@ -45,18 +52,19 @@ renameAction
 renameAction gblEnv group = do
   hscEnv <- Ghc.getTopEnv
   Ghc.Found _ breakPointMod <- liftIO $
-    Ghc.findImportedModule hscEnv (Ghc.mkModuleName "Debug.BreakPoint") Nothing
+    Ghc.findPluginModule hscEnv (Ghc.mkModuleName "Debug.BreakPoint")
   -- TODO this could fail if base if not a dependency?
   Ghc.Found _ preludeMod <- liftIO $
     Ghc.findImportedModule hscEnv (Ghc.mkModuleName "GHC.Show") (Just $ Ghc.fsLit "base")
-
+  -- TODO This fails if 'containers' is not a dep
   Ghc.Found _ mapMod <- liftIO $
     Ghc.findImportedModule hscEnv (Ghc.mkModuleName "Data.Map.Internal") (Just $ Ghc.fsLit "containers")
 
   -- TODO cache these lookups somehow?
-  traceVarsName <- Ghc.lookupOrig breakPointMod (Ghc.mkVarOcc "traceVars")
+  captureVarsName <- Ghc.lookupOrig breakPointMod (Ghc.mkVarOcc "captureVars")
   showName <- Ghc.lookupOrig preludeMod (Ghc.mkVarOcc "show")
   fromListName <- Ghc.lookupOrig mapMod (Ghc.mkVarOcc "fromAscList")
+  mkShowWrapperName <- Ghc.lookupOrig breakPointMod (Ghc.mkVarOcc "MkShowWrapper")
 
   let (group', _) =
         runReader (runWriterT $ recurse group)
@@ -95,18 +103,20 @@ transform a = runMaybeT
 
 hsVarCase :: Ghc.HsExpr Ghc.GhcRn
           -> EnvReader (Maybe (Ghc.HsExpr Ghc.GhcRn))
-hsVarCase (Ghc.HsVar _ (Ghc.L srcSpanAnn name)) = do
-  matchesTarget <- lift . asks $ (== name) . traceVarsName
+hsVarCase (Ghc.HsVar _ (Ghc.L _ name)) = do
+  matchesTarget <- lift . asks $ (== name) . captureVarsName
   if matchesTarget
      then do
        nameShow <- lift $ asks showName
        fromListName <- lift $ asks fromListName
        names <- lift $ asks varSet
+       showWrapperName <- lift $ asks mkShowWrapperName
 
-       let mkTuple (Ghc.LexicalFastString varStr, name) =
+       let mkTuple (Ghc.LexicalFastString varStr, n) =
              Ghc.mkLHsTupleExpr
                [ Ghc.nlHsLit . Ghc.mkHsString $ Ghc.unpackFS varStr
-               , Ghc.nlHsApp (Ghc.nlHsVar nameShow) $ Ghc.nlHsVar name
+               , Ghc.nlHsApp (Ghc.nlHsVar nameShow) $
+                   Ghc.nlHsApp (Ghc.nlHsVar showWrapperName) (Ghc.nlHsVar n)
                ]
                Ghc.NoExtField
 
@@ -181,6 +191,7 @@ dealWithBind resultNames (lbind, names) = for lbind $ \bind -> do
             = Ghc.mkUniqSet . M.elems
               . (<> resNameExcl) . mkVarSet
               $ Ghc.nonDetEltsUniqSet pat_ext
+            | otherwise = pat_ext
       pure Ghc.PatBind { Ghc.pat_rhs = rhsRes, pat_ext = rhsVars, .. }
 
     -- Does this not occur in the renamer?
@@ -200,6 +211,7 @@ dealWithBind resultNames (lbind, names) = for lbind $ \bind -> do
             = Ghc.mkUniqSet . M.elems
               . (<> resNameExcl) . mkVarSet
               $ Ghc.nonDetEltsUniqSet psb_ext
+            | otherwise = psb_ext
       pure $ Ghc.PatSynBind x Ghc.PSB { psb_def = defRes, psb_ext = rhsVars, .. }
 
     other -> pure other
@@ -252,8 +264,8 @@ dealWithLocalBinds = \case
          else do
            -- Need to reorder the binds because the variables references on the
            -- RHS of some binds have changed
-           let mkTuple (bind, names)
-                 = (bind, names, foldMap getRhsFreeVars bind)
+           let mkTuple (bind, ns)
+                 = (bind, ns, foldMap getRhsFreeVars bind)
 
                finalResult = depAnalBinds $ mkTuple <$> resBindsWithNames
 
@@ -310,7 +322,7 @@ dealWithStmt = \case
     tell names
     pure $ Ghc.LetStmt x bindsRes
 
-  s@(Ghc.ApplicativeStmt x pairs mbJoin) -> do
+  Ghc.ApplicativeStmt x pairs mbJoin -> do
     let dealWithAppArg = \case
           a@Ghc.ApplicativeArgOne{..} -> do
             tell $ extractVarPats app_arg_pattern
@@ -330,19 +342,19 @@ dealWithStmt = \case
 
 hsProcCase :: Ghc.HsExpr Ghc.GhcRn
            -> EnvReader (Maybe (Ghc.HsExpr Ghc.GhcRn))
-hsProcCase expr@(Ghc.HsProc x1 lpat cmdTop) = do
+hsProcCase (Ghc.HsProc x1 lpat cmdTop) = do
   let inputNames = extractVarPats lpat
   runMaybeT $ do
     cmdTopRes <- for cmdTop $ \case
       Ghc.HsCmdTop x2 lcmd -> do
         cmdRes <- for lcmd $ \case
           Ghc.HsCmdDo x3 lstmts -> do
-            (stmtsRes, ns) <- lift . runWriterT . for lstmts $ \stmts -> do
+            (stmtsRes, _) <- lift . runWriterT . for lstmts $ \stmts -> do
               tell inputNames
               mapWriterT (addScopedVars inputNames) $ dealWithStatements stmts
             pure $ Ghc.HsCmdDo x3 stmtsRes
 
-          other -> empty -- TODO what other cases should be handled?
+          _other -> empty -- TODO what other cases should be handled?
 
         pure $ Ghc.HsCmdTop x2 cmdRes
     pure $ Ghc.HsProc x1 lpat cmdTopRes
@@ -365,9 +377,10 @@ type VarSet = M.Map Ghc.LexicalFastString Ghc.Name
 
 data Env = MkEnv
   { varSet :: !VarSet
-  , traceVarsName :: !Ghc.Name
+  , captureVarsName :: !Ghc.Name
   , showName :: !Ghc.Name
   , fromListName :: !Ghc.Name
+  , mkShowWrapperName :: !Ghc.Name
   }
 
 overVarSet :: (VarSet -> VarSet) -> Env -> Env
@@ -397,4 +410,95 @@ depAnalBinds binds_w_dus
              binds_w_dus
 
     get_binds (Graph.AcyclicSCC (bind, _, _)) = (Ghc.NonRecursive, Ghc.unitBag bind)
-    get_binds (Graph.CyclicSCC  binds_w_dus)  = (Ghc.Recursive, Ghc.listToBag [b | (b,_,_) <- binds_w_dus])
+    get_binds (Graph.CyclicSCC  binds_w_dus')  = (Ghc.Recursive, Ghc.listToBag [b | (b,_,_) <- binds_w_dus'])
+
+--------------------------------------------------------------------------------
+-- Type Checker Plugin
+--------------------------------------------------------------------------------
+
+data TcPluginNames =
+  MkTcPluginNames
+    { showLevClassName :: !Ghc.Name
+    , showClass :: !Ghc.Class
+    -- , mkShowWrapperName :: !Ghc.Name
+    }
+
+tcPlugin :: Ghc.TcPlugin
+tcPlugin = Ghc.TcPlugin
+  { Ghc.tcPluginInit  = initTcPlugin
+  , Ghc.tcPluginSolve = solver
+  , Ghc.tcPluginStop = const $ pure ()
+  }
+
+initTcPlugin :: Ghc.TcPluginM TcPluginNames
+initTcPlugin = do
+  Ghc.Found _ breakPointMod <-
+    Plugin.findImportedModule (Ghc.mkModuleName "Debug.BreakPoint") Nothing
+  Ghc.Found _ showMod <-
+    Plugin.findImportedModule (Ghc.mkModuleName "GHC.Show") (Just $ Ghc.fsLit "base")
+
+  showLevClassName <- Plugin.lookupOrig breakPointMod (Ghc.mkClsOcc "ShowLev")
+  -- mkShowWrapperName <- Plugin.lookupOrig breakPointMod (Ghc.mkVarOcc "MkShowWrapper")
+  showClass <- Plugin.tcLookupClass =<< Plugin.lookupOrig showMod (Ghc.mkClsOcc "Show")
+
+  pure MkTcPluginNames{..}
+
+findShowLevWanted :: TcPluginNames -> Ghc.Ct -> Maybe (Either (Ghc.Type, Ghc.Ct) (Ghc.Type, Ghc.Ct))
+findShowLevWanted names ct
+  | Ghc.CDictCan{..} <- ct
+  , showLevClassName names == Ghc.getName cc_class
+  , [Ghc.TyConApp tyCon [], arg2] <- cc_tyargs
+  = Just $ if Ghc.getName tyCon == Ghc.getName Ghc.liftedRepTyCon
+       then Right (arg2, ct)
+       else Left (arg2, ct)
+  | otherwise = Nothing
+
+solver :: TcPluginNames -> Ghc.TcPluginSolver
+solver names given derived wanted = do
+  solved <- for (findShowLevWanted names `mapMaybe` wanted) $ \case
+    Left (ty, ct) -> do -- unlifted type
+      unshowableDict <- Ghc.unsafeTcPluginTcM $ buildUnshowableDict ty
+      pure (unshowableDict, ct)
+    Right (ty, ct) -> do
+      instEnvs <- Plugin.getInstEnvs
+      case Ghc.lookupUniqueInstEnv instEnvs (showClass names) [ty] of
+        Right (clsInst, tys) -> do
+          let dfun = Ghc.is_dfun clsInst
+              (vars, subclasses, insts) = Ghc.tcSplitSigmaTy $ Ghc.idType dfun
+          if null subclasses
+             then pure (Ghc.evDFunApp dfun [] [], ct)
+             else do
+               unshowableDict <- Ghc.unsafeTcPluginTcM $ buildUnshowableDict ty
+               pure (unshowableDict, ct)
+        Left _ -> do
+          unshowableDict <- Ghc.unsafeTcPluginTcM $ buildUnshowableDict ty
+          pure (unshowableDict, ct)
+  traceM $ Ghc.showSDocUnsafe $ Ghc.ppr wanted
+  pure $ Ghc.TcPluginOk solved []
+-- If the rep is LiftedRep then call 'show' on it
+-- otherwise make some string dependent on the runtime rep.
+-- If searching for a Show instance for ShowWrapper, find some other means of
+-- showing the value or make a message about the lack of Show instance.
+
+buildUnshowableDict :: Ghc.Type -> Ghc.TcM Ghc.EvTerm
+buildUnshowableDict ty = do
+  str <- Ghc.mkStringExpr . Ghc.showSDocUnsafe $ Ghc.ppr ty
+  pure . Ghc.EvExpr $ Ghc.mkCoreLams [Ghc.mkWildValBinder Ghc.oneDataConTy ty] str
+
+--------------------------------------------------------------------------------
+-- Showing
+--------------------------------------------------------------------------------
+
+-- | Levity polymorphic 'Show'
+class ShowLev (rep :: RuntimeRep) (a :: TYPE rep) where
+  showLev :: a -> String
+
+newtype ShowWrapper a = MkShowWrapper a
+
+instance ShowLev LiftedRep a => Show (ShowWrapper a)
+
+-- Could be less work to have a newtype wrapper that derives Show and then only
+-- need to handle the cases where a show instance is not found for something.
+-- In this case would you only get wanted for things that truly don't have
+-- Show instances or would you get them for things that have a super class
+-- constraint as well?
