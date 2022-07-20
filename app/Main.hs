@@ -15,4 +15,4 @@ main = pure ()
 data F = F
 
 test :: String
-test = showLev 3.3#
+test = showLev (Just id)
