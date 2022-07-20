@@ -1,3 +1,5 @@
+{-# LANGUAGE DataKinds #-}
+{-# LANGUAGE MagicHash #-}
 {-# LANGUAGE FlexibleInstances #-}
 {-# LANGUAGE UndecidableInstances #-}
 {-# LANGUAGE GeneralizedNewtypeDeriving #-}
@@ -24,13 +26,14 @@ import           Control.Monad.Reader
 import           Control.Monad.Trans.Maybe
 import           Control.Monad.Trans.Writer.CPS
 import           Data.Coerce
-import           Data.Data
+import           Data.Data hiding (IntRep)
+import           Data.Functor
 import qualified Data.Graph as Graph
-import qualified Data.Map.Lazy as M
+import qualified Data.Map.Strict as M
 import           Data.Maybe
 import           Data.Monoid (Any(..))
 import           Data.Traversable (for)
-import           GHC.Exts (TYPE, RuntimeRep(..), LiftedRep)
+import           GHC.Exts (TYPE, RuntimeRep(..), LiftedRep, Int(..), Int#)
 import qualified GHC.Tc.Plugin as Plugin
 
 import qualified Debug.BreakPoint.GhcFacade as Ghc
@@ -39,6 +42,9 @@ import           Debug.Trace
 
 captureVars :: M.Map String String
 captureVars = mempty
+
+fromAscList :: Ord k => [(k, v)] -> M.Map k v
+fromAscList = M.fromAscList
 
 plugin :: Ghc.Plugin
 plugin = Ghc.defaultPlugin
@@ -55,19 +61,11 @@ renameAction gblEnv group = do
   hscEnv <- Ghc.getTopEnv
   Ghc.Found _ breakPointMod <- liftIO $
     Ghc.findPluginModule hscEnv (Ghc.mkModuleName "Debug.BreakPoint")
-  -- TODO this could fail if base if not a dependency?
-  Ghc.Found _ preludeMod <- liftIO $
-    Ghc.findImportedModule hscEnv (Ghc.mkModuleName "GHC.Show") (Just $ Ghc.fsLit "base")
-  -- TODO This fails if 'containers' is not a dep. Can it be reexported through
-  -- this module?
-  Ghc.Found _ mapMod <- liftIO $
-    Ghc.findImportedModule hscEnv (Ghc.mkModuleName "Data.Map.Internal") (Just $ Ghc.fsLit "containers")
 
   -- TODO cache these lookups somehow?
   captureVarsName <- Ghc.lookupOrig breakPointMod (Ghc.mkVarOcc "captureVars")
   showLevName <- Ghc.lookupOrig breakPointMod (Ghc.mkVarOcc "showLev")
-  fromListName <- Ghc.lookupOrig mapMod (Ghc.mkVarOcc "fromAscList")
-  mkShowWrapperName <- Ghc.lookupOrig breakPointMod (Ghc.mkVarOcc "MkShowWrapper")
+  fromListName <- Ghc.lookupOrig breakPointMod (Ghc.mkVarOcc "fromAscList")
 
   let (group', _) =
         runReader (runWriterT $ recurse group)
@@ -113,13 +111,11 @@ hsVarCase (Ghc.HsVar _ (Ghc.L _ name)) = do
        showName <- lift $ asks showLevName
        fromListName <- lift $ asks fromListName
        names <- lift $ asks varSet
-       showWrapperName <- lift $ asks mkShowWrapperName
 
        let mkTuple (Ghc.LexicalFastString varStr, n) =
              Ghc.mkLHsTupleExpr
                [ Ghc.nlHsLit . Ghc.mkHsString $ Ghc.unpackFS varStr
-               , Ghc.nlHsApp (Ghc.nlHsVar showName) $
-                   Ghc.nlHsApp (Ghc.nlHsVar showWrapperName) (Ghc.nlHsVar n)
+               , Ghc.nlHsApp (Ghc.nlHsVar showName) (Ghc.nlHsVar n)
                ]
                Ghc.NoExtField
 
@@ -383,7 +379,6 @@ data Env = MkEnv
   , captureVarsName :: !Ghc.Name
   , showLevName :: !Ghc.Name
   , fromListName :: !Ghc.Name
-  , mkShowWrapperName :: !Ghc.Name
   }
 
 overVarSet :: (VarSet -> VarSet) -> Env -> Env
@@ -424,7 +419,7 @@ data TcPluginNames =
     { showLevClassName :: !Ghc.Name
     , showClass :: !Ghc.Class
     , succeedClass :: !Ghc.Class
-    -- , mkShowWrapperName :: !Ghc.Name
+    , showWrapperTyCon :: !Ghc.TyCon
     }
 
 tcPlugin :: Ghc.TcPlugin
@@ -442,9 +437,9 @@ initTcPlugin = do
     Plugin.findImportedModule (Ghc.mkModuleName "GHC.Show") (Just $ Ghc.fsLit "base")
 
   showLevClassName <- Plugin.lookupOrig breakPointMod (Ghc.mkClsOcc "ShowLev")
-  -- mkShowWrapperName <- Plugin.lookupOrig breakPointMod (Ghc.mkVarOcc "MkShowWrapper")
   showClass <- Plugin.tcLookupClass =<< Plugin.lookupOrig showMod (Ghc.mkClsOcc "Show")
   succeedClass <- Plugin.tcLookupClass =<< Plugin.lookupOrig breakPointMod (Ghc.mkClsOcc "Succeed")
+  showWrapperTyCon <- Plugin.tcLookupTyCon =<< Plugin.lookupOrig breakPointMod (Ghc.mkClsOcc "ShowWrapper")
 
   pure MkTcPluginNames{..}
 
@@ -460,38 +455,97 @@ findShowLevWanted names ct
 
 solver :: TcPluginNames -> Ghc.TcPluginSolver
 solver names given derived wanted = do
+  instEnvs <- Plugin.getInstEnvs
   solved <- for (findShowLevWanted names `mapMaybe` wanted) $ \case
     Left (ty, ct) -> do -- unlifted type
       unshowableDict <- Ghc.unsafeTcPluginTcM $ buildUnshowableDict ty
-      pure (unshowableDict, ct)
+      pure $ Just (unshowableDict, ct)
     Right (ty, ct) -> do
-      instEnvs <- Plugin.getInstEnvs
-      case Ghc.lookupUniqueInstEnv instEnvs (showClass names) [ty] of
-        Right (clsInst, tys) -> do
-          let dfun = Ghc.is_dfun clsInst
-              (vars, subclasses, insts) = Ghc.tcSplitSigmaTy $ Ghc.idType dfun
-          if null subclasses
-             then do
-               let Ghc.EvExpr showDict = Ghc.evDFunApp dfun [] []
-                   Right (succInst, _) = Ghc.lookupUniqueInstEnv instEnvs (succeedClass names) [ty]
-                   result = liftDict succInst ty showDict
-               pure (result, ct)
-             else do
-               unshowableDict <- Ghc.unsafeTcPluginTcM $ buildUnshowableDict ty
-               pure (unshowableDict, ct)
-        Left _ -> do
-          unshowableDict <- Ghc.unsafeTcPluginTcM $ buildUnshowableDict ty
-          pure (unshowableDict, ct)
+      traceM $ Ghc.showSDocUnsafe $ Ghc.ppr (ty, ct)
+      mShowDict <- buildDict names (showClass names) [ty]
+      pure $ mShowDict <&> \showDict ->
+        let Right (succInst, _) = Ghc.lookupUniqueInstEnv instEnvs (succeedClass names) [ty]
+         in (liftDict succInst ty (getEvExprFromDict showDict), ct)
   traceM $ Ghc.showSDocUnsafe $ Ghc.ppr wanted
-  pure $ Ghc.TcPluginOk solved []
--- If the rep is LiftedRep then call 'show' on it
--- otherwise make some string dependent on the runtime rep.
--- If searching for a Show instance for ShowWrapper, find some other means of
--- showing the value or make a message about the lack of Show instance.
+  pure $ Ghc.TcPluginOk (catMaybes solved) []
+
+buildDict :: TcPluginNames -> Ghc.Class -> [Ghc.Type] -> Ghc.TcPluginM (Maybe Ghc.EvTerm)
+buildDict names cls tys = do
+  traceM $ Ghc.showSDocUnsafe $ Ghc.ppr (cls, tys)
+  instEnvs <- Plugin.getInstEnvs
+  case Ghc.lookupUniqueInstEnv instEnvs (showClass names) tys of
+    Right (clsInst, _) -> do
+      let dfun = Ghc.is_dfun clsInst
+          (vars, subclasses, inst) = Ghc.tcSplitSigmaTy $ Ghc.idType dfun
+      if null subclasses
+         then pure . Just $ Ghc.evDFunApp dfun [] [] -- why no use of vars here?
+         else do
+           let tyVarMap = mkTyVarMapping inst tys
+           traceM $ Ghc.showSDocUnsafe $ Ghc.ppr tyVarMap
+           mSolvedSubClassDicts <- fmap sequence . for subclasses $ \subclass -> do
+             let (subCls, subTys) = Ghc.tcSplitDFunHead subclass
+                 subTys' = instantiateVars tyVarMap subTys
+             buildDict names subCls subTys'
+           pure $ do
+             vars' <- traverse (tyVarMap M.!?) vars
+             Ghc.evDFunApp dfun vars' . map getEvExprFromDict
+               <$> mSolvedSubClassDicts
+    Left _
+      | cls == showClass names
+      , [ty] <- tys -> do
+          traceM $ Ghc.showSDocUnsafe $ Ghc.ppr ty
+          unshowableDict <- Ghc.unsafeTcPluginTcM $ buildUnshowableDict ty
+          let Right (inst, _) =
+                Ghc.lookupUniqueInstEnv
+                  instEnvs
+                  cls
+                  [Ghc.mkTyConApp (showWrapperTyCon names) [ty]]
+              liftedDict =
+                liftDict inst ty (getEvExprFromDict unshowableDict)
+          pure $ Just liftedDict
+      | otherwise -> pure Nothing
+
+getEvExprFromDict :: Ghc.EvTerm -> Ghc.EvExpr
+getEvExprFromDict = \case
+  Ghc.EvExpr expr -> expr
+  _ -> error "invalid argument to getEvExprFromDict"
+
+mkTyVarMapping
+  :: Ghc.Type -- Wanted instance
+  -> [Ghc.Type] -- Concrete types
+  -> M.Map Ghc.TyVar Ghc.Type
+mkTyVarMapping wanted tys =
+  let wantedHead = snd $ Ghc.splitAppTys wanted
+      wantedTyVars = concatMap (snd . Ghc.splitAppTys) wantedHead
+      concreteTys = concatMap (snd . Ghc.splitAppTys) tys
+   in M.fromList $ do
+     (a, b) <- zip wantedTyVars concreteTys
+     Just tyVar <- [Ghc.getTyVar_maybe a]
+     pure (tyVar, b)
+
+instantiateVars :: M.Map Ghc.TyVar Ghc.Type -> [Ghc.Type] -> [Ghc.Type]
+instantiateVars tyVarMap tys = replace <$> tys
+  where
+    replace arg = fromMaybe arg $ do
+      tyVar <- Ghc.getTyVar_maybe arg
+      M.lookup tyVar tyVarMap -- this lookup shouldn't fail
+
+-- instantiateWantedInst
+--   :: M.Map Ghc.TyVar Ghc.Type
+--   -> Ghc.Type
+--   -> Ghc.Type
+-- instantiateWantedInst tyVarMap ty =
+--   let (con, args) = Ghc.splitAppTys ty
+--       replace arg = fromMaybe arg $ do
+--         tyVar <- Ghc.getTyVar_maybe arg
+--         M.lookup tyVar tyVarMap -- this lookup shouldn't fail
+--       replaced = replace <$> args
+--    in Ghc.mkAppTys con replaced
 
 buildUnshowableDict :: Ghc.Type -> Ghc.TcM Ghc.EvTerm
 buildUnshowableDict ty = do
-  str <- Ghc.mkStringExpr . Ghc.showSDocUnsafe $ Ghc.ppr ty
+  let tyString = Ghc.showSDocUnsafe $ Ghc.pprTypeForUser ty
+  str <- Ghc.mkStringExpr $ "<" <> tyString <> ">"
   pure . Ghc.EvExpr $ Ghc.mkCoreLams [Ghc.mkWildValBinder Ghc.oneDataConTy ty] str
 
 liftDict :: Ghc.ClsInst -> Ghc.Type -> Ghc.EvExpr -> Ghc.EvTerm
@@ -505,9 +559,14 @@ liftDict succ_inst ty dict = Ghc.evDFunApp (Ghc.is_dfun succ_inst) [ty] [dict]
 class ShowLev (rep :: RuntimeRep) (a :: TYPE rep) where
   showLev :: a -> String
 
+-- TODO define more instances for unboxed types
+instance ShowLev IntRep Int# where
+  showLev i = show $ I# i
+
 newtype ShowWrapper a = MkShowWrapper a
 
-instance ShowLev LiftedRep a => Show (ShowWrapper a)
+instance ShowLev LiftedRep a => Show (ShowWrapper a) where
+  show (MkShowWrapper a) = "(" <> showLev a <> ")"
 
 class Succeed a where
   succeed :: a -> String

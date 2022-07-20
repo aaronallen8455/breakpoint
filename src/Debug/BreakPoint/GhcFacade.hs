@@ -32,3 +32,6 @@ import           GHC.Types.Id as Ghc
 import           GHC.Core.InstEnv as Ghc
 import           GHC.Core.Class as Ghc hiding (FunDep)
 import           GHC.Tc.Utils.TcType as Ghc
+import           GHC.Core.Type as Ghc
+import           GHC.Core.TyCon as Ghc
+import           GHC.Types.TyThing.Ppr as Ghc
