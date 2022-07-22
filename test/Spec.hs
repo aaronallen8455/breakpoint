@@ -79,8 +79,8 @@ nestedInLet = test5 1 @?= M.fromList [("a", "1"), ("b", "2"), ("c", "3")]
 test5 :: Int -> M.Map String String
 test5 a =
   let x =
-        let b = 2
-            c = 3
+        let b = 2 :: Int
+            c = 3 :: Int
          in captureVars
    in x
 
@@ -146,7 +146,7 @@ test13 :: M.Map String String
 test13 = fromMaybe mempty $ do
   a <- Just True
   b <- Just False
-  let x = 5
+  let x = 5 :: Int
   pure captureVars
 
 monadicBindsScoped :: Assertion
@@ -177,7 +177,7 @@ arrowNotation :: Assertion
 arrowNotation = test17 @?= M.fromList [("a", "2"), ("b", "0"), ("x", "1")]
 
 test17 :: M.Map String String
-test17 = go 1 where
+test17 = go (1 :: Int) where
   go = proc x -> do
     a <- succ -< x
     let b = pred x

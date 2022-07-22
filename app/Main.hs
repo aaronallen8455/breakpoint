@@ -15,4 +15,8 @@ main = pure ()
 data F = F
 
 test :: String
-test = showLev (Just id)
+test =
+  let x = "one"
+      y = 2 :: Int
+      z = True
+   in breakPoint captureVars x

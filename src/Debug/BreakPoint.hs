@@ -17,6 +17,7 @@ module Debug.BreakPoint
   ( plugin
   , captureVars
   , showLev
+  , fromAscList
   ) where
 
 import           Control.Applicative ((<|>), empty)
@@ -35,14 +36,15 @@ import           Data.Monoid (Any(..))
 import           Data.Traversable (for)
 import           GHC.Exts (TYPE, RuntimeRep(..), LiftedRep, Int(..), Int#)
 import qualified GHC.Tc.Plugin as Plugin
+import           System.IO.Unsafe (unsafePerformIO)
 
 import qualified Debug.BreakPoint.GhcFacade as Ghc
 
 captureVars :: M.Map String String
 captureVars = mempty
 
-_fromAscList :: Ord k => [(k, v)] -> M.Map k v
-_fromAscList = M.fromAscList
+fromAscList :: Ord k => [(k, v)] -> M.Map k v
+fromAscList = M.fromAscList
 
 plugin :: Ghc.Plugin
 plugin = Ghc.defaultPlugin
@@ -60,10 +62,9 @@ renameAction gblEnv group = do
   Ghc.Found _ breakPointMod <- liftIO $
     Ghc.findPluginModule hscEnv (Ghc.mkModuleName "Debug.BreakPoint")
 
-  -- TODO cache these lookups somehow?
   captureVarsName <- Ghc.lookupOrig breakPointMod (Ghc.mkVarOcc "captureVars")
   showLevName <- Ghc.lookupOrig breakPointMod (Ghc.mkVarOcc "showLev")
-  fromListName <- Ghc.lookupOrig breakPointMod (Ghc.mkVarOcc "_fromAscList")
+  fromListName <- Ghc.lookupOrig breakPointMod (Ghc.mkVarOcc "fromAscList")
 
   let (group', _) =
         runReader (runWriterT $ recurse group)
@@ -351,7 +352,7 @@ hsProcCase (Ghc.HsProc x1 lpat cmdTop) = do
               mapWriterT (addScopedVars inputNames) $ dealWithStatements stmts
             pure $ Ghc.HsCmdDo x3 stmtsRes
 
-          _other -> empty -- TODO what other cases should be handled?
+          _ -> empty -- TODO what other cases should be handled?
 
         pure $ Ghc.HsCmdTop x2 cmdRes
     pure $ Ghc.HsProc x1 lpat cmdTopRes
@@ -405,8 +406,10 @@ depAnalBinds binds_w_dus
              (\(_, _, uses) -> Ghc.nonDetEltsUniqSet uses)
              binds_w_dus
 
-    get_binds (Graph.AcyclicSCC (bind, _, _)) = (Ghc.NonRecursive, Ghc.unitBag bind)
-    get_binds (Graph.CyclicSCC  binds_w_dus')  = (Ghc.Recursive, Ghc.listToBag [b | (b,_,_) <- binds_w_dus'])
+    get_binds (Graph.AcyclicSCC (bind, _, _)) =
+      (Ghc.NonRecursive, Ghc.unitBag bind)
+    get_binds (Graph.CyclicSCC  binds_w_dus') =
+      (Ghc.Recursive, Ghc.listToBag [b | (b,_,_) <- binds_w_dus'])
 
 --------------------------------------------------------------------------------
 -- Type Checker Plugin
@@ -441,7 +444,10 @@ initTcPlugin = do
 
   pure MkTcPluginNames{..}
 
-findShowLevWanted :: TcPluginNames -> Ghc.Ct -> Maybe (Either (Ghc.Type, Ghc.Ct) (Ghc.Type, Ghc.Ct))
+findShowLevWanted
+  :: TcPluginNames
+  -> Ghc.Ct
+  -> Maybe (Either (Ghc.Type, Ghc.Ct) (Ghc.Type, Ghc.Ct))
 findShowLevWanted names ct
   | Ghc.CDictCan{..} <- ct
   , showLevClassName names == Ghc.getName cc_class
@@ -464,9 +470,15 @@ solver names _given _derived wanted = do
         let (succInst, _) = fromRight (error "impossible: no Succeed instance") $
               Ghc.lookupUniqueInstEnv instEnvs (succeedClass names) [ty]
          in (liftDict succInst ty (getEvExprFromDict showDict), ct)
-  pure $ Ghc.TcPluginOk (catMaybes solved) []
+  if length wanted == 2
+     then pure $ Ghc.TcPluginOk [] []
+     else pure $ Ghc.TcPluginOk (catMaybes solved) []
 
-buildDict :: TcPluginNames -> Ghc.Class -> [Ghc.Type] -> Ghc.TcPluginM (Maybe Ghc.EvTerm)
+buildDict
+  :: TcPluginNames
+  -> Ghc.Class
+  -> [Ghc.Type]
+  -> Ghc.TcPluginM (Maybe Ghc.EvTerm)
 buildDict names cls tys = do
   instEnvs <- Plugin.getInstEnvs
   case Ghc.lookupUniqueInstEnv instEnvs (showClass names) tys of
@@ -528,7 +540,8 @@ buildUnshowableDict :: Ghc.Type -> Ghc.TcM Ghc.EvTerm
 buildUnshowableDict ty = do
   let tyString = Ghc.showSDocUnsafe $ Ghc.pprTypeForUser ty
   str <- Ghc.mkStringExpr $ "<" <> tyString <> ">"
-  pure . Ghc.EvExpr $ Ghc.mkCoreLams [Ghc.mkWildValBinder Ghc.oneDataConTy ty] str
+  pure . Ghc.EvExpr $
+    Ghc.mkCoreLams [Ghc.mkWildValBinder Ghc.oneDataConTy ty] str
 
 liftDict :: Ghc.ClsInst -> Ghc.Type -> Ghc.EvExpr -> Ghc.EvTerm
 liftDict succ_inst ty dict = Ghc.evDFunApp (Ghc.is_dfun succ_inst) [ty] [dict]
@@ -555,3 +568,26 @@ class Succeed a where
 
 instance Show a => Succeed a where
   _succeed = show
+
+--------------------------------------------------------------------------------
+-- Break
+--------------------------------------------------------------------------------
+
+printAndWait :: M.Map String String -> a -> a
+printAndWait vars x = unsafePerformIO $ printAndWaitIO vars x
+
+printAndWaitIO :: M.Map String String -> a -> IO a
+printAndWaitIO vars x = do
+  print vars
+  _ <- getLine
+  pure x
+
+bp :: a -> a
+bp = id
+
+bpM :: Applicative m => m ()
+bpM = pure ()
+
+-- Plugin should replace these identifiers with
+-- printAndWait captureVars x
+-- printAndWaitIO captureVars ()
