@@ -1,5 +1,5 @@
 cabal-version:      3.0
-name:               break-point
+name:               breakpoint
 version:            0.1.0.0
 synopsis:
 
@@ -20,8 +20,8 @@ category:           Development
 extra-source-files: CHANGELOG.md
 
 library
-    exposed-modules:  Debug.BreakPoint,
-                      Debug.BreakPoint.GhcFacade
+    exposed-modules:  Debug.Breakpoint,
+                      Debug.Breakpoint.GhcFacade
 
     -- Modules included in this library but not exported.
     -- other-modules:
@@ -48,7 +48,7 @@ executable test
     -- other-extensions:
     build-depends:
         base ^>=4.16.1.0,
-        break-point,
+        breakpoint,
         containers
 
     hs-source-dirs:   app
@@ -58,7 +58,7 @@ test-suite spec
   main-is: Spec.hs
   other-modules: ApplicativeDo
   hs-source-dirs: test
-  build-depends: base, tasty, tasty-hunit, break-point, containers
+  build-depends: base, tasty, tasty-hunit, breakpoint, containers
   type: exitcode-stdio-1.0
   default-language: Haskell2010
-  ghc-options: -fplugin Debug.BreakPoint
+  ghc-options: -fplugin Debug.Breakpoint

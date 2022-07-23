@@ -1,5 +1,5 @@
 {-# LANGUAGE MagicHash #-}
-{-# OPTIONS_GHC -fplugin Debug.BreakPoint #-}
+{-# OPTIONS_GHC -fplugin Debug.Breakpoint #-}
 module Main where
 
 import           Control.Concurrent
@@ -7,7 +7,7 @@ import           Control.Concurrent.QSem
 import           System.IO.Unsafe
 import           GHC.Exts
 
-import Debug.BreakPoint
+import Debug.Breakpoint
 import Debug.Trace
 
 main :: IO ()

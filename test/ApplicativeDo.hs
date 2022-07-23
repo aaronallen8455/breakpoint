@@ -10,7 +10,7 @@ import           Data.Maybe
 import           Test.Tasty
 import           Test.Tasty.HUnit
 
-import           Debug.BreakPoint
+import           Debug.Breakpoint
 
 -- Needs to be a separate module b/c ApplicativeDo affects other tests
 

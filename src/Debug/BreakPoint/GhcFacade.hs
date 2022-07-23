@@ -1,4 +1,4 @@
-module Debug.BreakPoint.GhcFacade
+module Debug.Breakpoint.GhcFacade
   ( module Ghc
   ) where
 

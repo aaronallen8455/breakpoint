@@ -6,7 +6,7 @@ import           Data.Maybe
 import           Test.Tasty
 import           Test.Tasty.HUnit
 
-import           Debug.BreakPoint
+import           Debug.Breakpoint
 import qualified ApplicativeDo as ApDo
 
 main :: IO ()
@@ -179,7 +179,7 @@ arrowNotation = test17 @?= M.fromList [("a", "2"), ("b", "0"), ("x", "1")]
 test17 :: M.Map String String
 test17 = go (1 :: Int) where
   go = proc x -> do
-    a <- succ -< x
+    a <- succ -< (x :: Int)
     let b = pred x
     returnA -< captureVars
 

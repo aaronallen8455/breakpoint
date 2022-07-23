@@ -1,4 +1,4 @@
-# Revision history for break-point
+# Revision history for breakpoint
 
 ## 0.1.0.0 -- YYYY-mm-dd
 
