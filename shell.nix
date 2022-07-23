@@ -4,7 +4,7 @@ with import <nixpkgs> { inherit system; };
 
 mkShell {
   buildInputs = [
-    haskell.compiler.ghc923
+    haskell.compiler.ghc922
     cabal-install
   ];
 }

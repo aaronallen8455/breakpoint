@@ -1,3 +1,4 @@
+{-# LANGUAGE MultiWayIf #-}
 {-# LANGUAGE DataKinds #-}
 {-# LANGUAGE MagicHash #-}
 {-# LANGUAGE FlexibleInstances #-}
@@ -18,15 +19,22 @@ module Debug.BreakPoint
   , captureVars
   , showLev
   , fromAscList
+  , printAndWait
+  , printAndWaitM
+  , printAndWaitIO
+  , bp
+  , bpM
+  , bpIO
   ) where
 
 import           Control.Applicative ((<|>), empty)
 import           Control.Arrow ((&&&))
+import           Control.Monad.IO.Class
 import           Control.Monad.Reader
 import           Control.Monad.Trans.Maybe
 import           Control.Monad.Trans.Writer.CPS
 import           Data.Coerce
-import           Data.Data hiding (IntRep)
+import           Data.Data hiding (IntRep, FloatRep)
 import           Data.Either
 import           Data.Functor
 import qualified Data.Graph as Graph
@@ -34,7 +42,8 @@ import qualified Data.Map.Strict as M
 import           Data.Maybe
 import           Data.Monoid (Any(..))
 import           Data.Traversable (for)
-import           GHC.Exts (TYPE, RuntimeRep(..), LiftedRep, Int(..), Int#)
+import           Debug.Trace (traceIO)
+import           GHC.Exts (TYPE, RuntimeRep(..), LiftedRep, Int(..), Int#, Float(..), Float#, Double#, Double(..))
 import qualified GHC.Tc.Plugin as Plugin
 import           System.IO.Unsafe (unsafePerformIO)
 
@@ -65,6 +74,12 @@ renameAction gblEnv group = do
   captureVarsName <- Ghc.lookupOrig breakPointMod (Ghc.mkVarOcc "captureVars")
   showLevName <- Ghc.lookupOrig breakPointMod (Ghc.mkVarOcc "showLev")
   fromListName <- Ghc.lookupOrig breakPointMod (Ghc.mkVarOcc "fromAscList")
+  bpName <- Ghc.lookupOrig breakPointMod (Ghc.mkVarOcc "bp")
+  bpMName <- Ghc.lookupOrig breakPointMod (Ghc.mkVarOcc "bpM")
+  bpIOName <- Ghc.lookupOrig breakPointMod (Ghc.mkVarOcc "bpIO")
+  printAndWaitName <- Ghc.lookupOrig breakPointMod (Ghc.mkVarOcc "printAndWait")
+  printAndWaitMName <- Ghc.lookupOrig breakPointMod (Ghc.mkVarOcc "printAndWaitM")
+  printAndWaitIOName <- Ghc.lookupOrig breakPointMod (Ghc.mkVarOcc "printAndWaitIO")
 
   let (group', _) =
         runReader (runWriterT $ recurse group)
@@ -103,30 +118,61 @@ transform a = runMaybeT
 
 hsVarCase :: Ghc.HsExpr Ghc.GhcRn
           -> EnvReader (Maybe (Ghc.HsExpr Ghc.GhcRn))
-hsVarCase (Ghc.HsVar _ (Ghc.L _ name)) = do
-  matchesTarget <- lift . asks $ (== name) . captureVarsName
-  if matchesTarget
-     then do
-       showName <- lift $ asks showLevName
-       fromListName <- lift $ asks fromListName
-       names <- lift $ asks varSet
+hsVarCase (Ghc.HsVar _ (Ghc.L loc name)) = do
+  MkEnv{..} <- lift ask
 
-       let mkTuple (Ghc.LexicalFastString varStr, n) =
-             Ghc.mkLHsTupleExpr
-               [ Ghc.nlHsLit . Ghc.mkHsString $ Ghc.unpackFS varStr
-               , Ghc.nlHsApp (Ghc.nlHsVar showName) (Ghc.nlHsVar n)
-               ]
-               Ghc.NoExtField
+  let srcLocStringExpr
+        = Ghc.nlHsLit . Ghc.mkHsString
+        . (\x -> "(" <> x <> ")")
+        . Ghc.showSDocUnsafe
+        . Ghc.pprUserSpan True
+        $ Ghc.locA loc
 
-           mkList exprs = Ghc.noLocA (Ghc.ExplicitList Ghc.NoExtField exprs)
+      captureVarsExpr =
+        let mkTuple (Ghc.LexicalFastString varStr, n) =
+              Ghc.mkLHsTupleExpr
+                [ Ghc.nlHsLit . Ghc.mkHsString $ Ghc.unpackFS varStr
+                , Ghc.nlHsApp (Ghc.nlHsVar showLevName) (Ghc.nlHsVar n)
+                ]
+                Ghc.NoExtField
 
-           expr = Ghc.nlHsApp (Ghc.nlHsVar fromListName) . mkList
-                $ mkTuple <$> M.toList names
+            mkList exprs = Ghc.noLocA (Ghc.ExplicitList Ghc.NoExtField exprs)
 
-       tell $ Any True
+         in Ghc.nlHsApp (Ghc.nlHsVar fromListName) . mkList
+              $ mkTuple <$> M.toList varSet
 
-       pure (Just $ Ghc.unLoc expr)
-     else pure Nothing
+      bpExpr =
+        Ghc.nlHsApp
+          (Ghc.nlHsApp (Ghc.nlHsVar printAndWaitName) srcLocStringExpr)
+          captureVarsExpr
+
+      bpMExpr =
+        Ghc.nlHsApp
+          (Ghc.nlHsApp (Ghc.nlHsVar printAndWaitMName) srcLocStringExpr)
+          captureVarsExpr
+
+      bpIOExpr =
+        Ghc.nlHsApp
+          (Ghc.nlHsApp (Ghc.nlHsVar printAndWaitIOName) srcLocStringExpr)
+          captureVarsExpr
+
+  if | captureVarsName == name -> do
+         tell $ Any True
+         pure (Just $ Ghc.unLoc captureVarsExpr)
+
+     | bpName == name -> do
+         tell $ Any True
+         pure (Just $ Ghc.unLoc bpExpr)
+
+     | bpMName == name -> do
+         tell $ Any True
+         pure (Just $ Ghc.unLoc bpMExpr)
+
+     | bpIOName == name -> do
+         tell $ Any True
+         pure (Just $ Ghc.unLoc bpIOExpr)
+
+     | otherwise -> pure Nothing
 hsVarCase _ = pure Nothing
 
 --------------------------------------------------------------------------------
@@ -378,6 +424,12 @@ data Env = MkEnv
   , captureVarsName :: !Ghc.Name
   , showLevName :: !Ghc.Name
   , fromListName :: !Ghc.Name
+  , bpName :: !Ghc.Name
+  , bpMName :: !Ghc.Name
+  , bpIOName :: !Ghc.Name
+  , printAndWaitName :: !Ghc.Name
+  , printAndWaitMName :: !Ghc.Name
+  , printAndWaitIOName :: !Ghc.Name
   }
 
 overVarSet :: (VarSet -> VarSet) -> Env -> Env
@@ -470,9 +522,7 @@ solver names _given _derived wanted = do
         let (succInst, _) = fromRight (error "impossible: no Succeed instance") $
               Ghc.lookupUniqueInstEnv instEnvs (succeedClass names) [ty]
          in (liftDict succInst ty (getEvExprFromDict showDict), ct)
-  if length wanted == 2
-     then pure $ Ghc.TcPluginOk [] []
-     else pure $ Ghc.TcPluginOk (catMaybes solved) []
+  pure $ Ghc.TcPluginOk (catMaybes solved) []
 
 buildDict
   :: TcPluginNames
@@ -558,6 +608,12 @@ class ShowLev (rep :: RuntimeRep) (a :: TYPE rep) where
 instance ShowLev 'IntRep Int# where
   showLev i = show $ I# i
 
+instance ShowLev 'FloatRep Float# where
+  showLev f = show $ F# f
+
+instance ShowLev 'DoubleRep Double# where
+  showLev d = show $ D# d
+
 newtype ShowWrapper a = MkShowWrapper a
 
 instance ShowLev LiftedRep a => Show (ShowWrapper a) where
@@ -573,14 +629,28 @@ instance Show a => Succeed a where
 -- Break
 --------------------------------------------------------------------------------
 
-printAndWait :: M.Map String String -> a -> a
-printAndWait vars x = unsafePerformIO $ printAndWaitIO vars x
-
-printAndWaitIO :: M.Map String String -> a -> IO a
-printAndWaitIO vars x = do
-  print vars
+-- TODO inlcude source code span
+printAndWait :: String -> M.Map String String -> a -> a
+printAndWait srcLoc vars x = unsafePerformIO $ do
+  traceIO "### Breakpoint Hit ###"
+  traceIO srcLoc
+  printVars vars
+  traceIO "Press enter to continue"
   _ <- getLine
   pure x
+{-# NOINLINE printAndWait #-}
+
+printAndWaitM :: Applicative m => String -> M.Map String String -> m ()
+printAndWaitM srcLoc vars = printAndWait srcLoc vars $ pure ()
+
+printAndWaitIO :: MonadIO m => String -> M.Map String String -> m ()
+printAndWaitIO srcLoc vars = liftIO $ do
+  traceIO "### Breakpoint Hit ###"
+  traceIO srcLoc
+  printVars vars
+  traceIO "Press enter to continue"
+  _ <- getLine
+  pure ()
 
 bp :: a -> a
 bp = id
@@ -588,6 +658,20 @@ bp = id
 bpM :: Applicative m => m ()
 bpM = pure ()
 
+bpIO :: MonadIO m => m ()
+bpIO = pure ()
+
+printVars :: M.Map String String -> IO ()
+printVars vars = do
+  let mkLine (k, v) = k <> " = " <> v
+  traceIO . unlines $ mkLine <$> M.toList vars
+
 -- Plugin should replace these identifiers with
 -- printAndWait captureVars x
--- printAndWaitIO captureVars ()
+-- printAndWait captureVars (pure ())
+-- For the monad breakpoint, should have a bind with a strict annotation?
+-- would require knowing that the expression is in a do block
+--
+-- multiple breaks in the same block can be collapsed. Could possibly solve
+-- by having a type class that is aware of LiftIO instances and not do
+-- lazy IO in those cases

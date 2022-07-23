@@ -8,15 +8,20 @@ import           System.IO.Unsafe
 import           GHC.Exts
 
 import Debug.BreakPoint
+import Debug.Trace
 
 main :: IO ()
 main = pure ()
 
 data F = F
 
-test :: String
-test =
-  let x = "one"
+test :: IO ()
+test = do
+  let w = 5# :: Int#
+      x = "one"
       y = 2 :: Int
-      z = True
-   in breakPoint captureVars x
+      z = id :: Bool -> Bool
+  bpIO
+  x <- getLine
+  bpIO
+  pure ()
