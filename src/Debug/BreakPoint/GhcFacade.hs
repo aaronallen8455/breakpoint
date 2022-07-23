@@ -3,7 +3,6 @@ module Debug.Breakpoint.GhcFacade
   ) where
 
 import           GHC.Driver.Plugins as Ghc hiding (TcPlugin)
--- import           GHC.Plugins as Ghc
 import           GHC.Hs.Extension as Ghc
 import           Language.Haskell.Syntax as Ghc
 import           GHC.Tc.Types as Ghc
