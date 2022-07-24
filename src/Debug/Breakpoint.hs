@@ -1,3 +1,6 @@
+{-# LANGUAGE CPP #-}
+{-# LANGUAGE ViewPatterns #-}
+{-# LANGUAGE DataKinds #-}
 {-# LANGUAGE MultiWayIf #-}
 {-# LANGUAGE MagicHash #-}
 {-# LANGUAGE FlexibleInstances #-}
@@ -40,10 +43,10 @@ import           Data.Maybe
 import           Data.Monoid (Any(..))
 import           Data.Traversable (for)
 import           Debug.Trace (traceIO)
-import           GHC.Exts (TYPE, RuntimeRep(..), LiftedRep, Int#, Float(..), Float#, Double#, Double(..), Int8#, Int16#, Int32#, Word#, Word8#, Word16#, Word32#)
-import           GHC.Int (Int(..), Int8(..), Int16(..), Int32(..))
+import qualified GHC.Exts as Exts
+import           GHC.Int
 import qualified GHC.Tc.Plugin as Plugin
-import           GHC.Word (Word(..), Word8(..), Word16(..), Word32(..))
+import           GHC.Word
 import           System.IO.Unsafe (unsafePerformIO)
 
 import qualified Debug.Breakpoint.GhcFacade as Ghc
@@ -72,7 +75,7 @@ printAndWaitM srcLoc vars = printAndWait srcLoc vars $ pure ()
 printAndWaitIO :: MonadIO m => String -> M.Map String String -> m ()
 printAndWaitIO srcLoc vars = liftIO $ do
   traceIO "### Breakpoint Hit ###"
-  traceIO srcLoc
+  traceIO $ "(" <> srcLoc <> ")"
   printVars vars
   traceIO "Press enter to continue"
   _ <- getLine
@@ -175,20 +178,21 @@ hsVarCase (Ghc.HsVar _ (Ghc.L loc name)) = do
 
   let srcLocStringExpr
         = Ghc.nlHsLit . Ghc.mkHsString
-        . (\x -> "(" <> x <> ")")
         . Ghc.showSDocUnsafe
-        . Ghc.pprUserSpan True
-        $ Ghc.locA loc
+        . Ghc.ppr
+        $ Ghc.locA' loc
 
       captureVarsExpr =
-        let mkTuple (Ghc.LexicalFastString varStr, n) =
+        let mkTuple (Ghc.fromLexicalFastString -> varStr, n) =
               Ghc.mkLHsTupleExpr
                 [ Ghc.nlHsLit . Ghc.mkHsString $ Ghc.unpackFS varStr
                 , Ghc.nlHsApp (Ghc.nlHsVar showLevName) (Ghc.nlHsVar n)
                 ]
+#if MIN_VERSION_ghc(9,2,0)
                 Ghc.NoExtField
+#endif
 
-            mkList exprs = Ghc.noLocA (Ghc.ExplicitList Ghc.NoExtField exprs)
+            mkList exprs = Ghc.noLocA' (Ghc.ExplicitList' Ghc.NoExtField exprs)
 
          in Ghc.nlHsApp (Ghc.nlHsVar fromListName) . mkList
               $ mkTuple <$> M.toList varSet
@@ -243,7 +247,7 @@ matchCase Ghc.Match {..} = do
     Ghc.Match { Ghc.m_grhss = grhRes, .. }
 
 extractVarPats :: Ghc.LPat Ghc.GhcRn -> VarSet
-extractVarPats = mkVarSet . Ghc.collectPatBinders Ghc.CollNoDictBinders
+extractVarPats = mkVarSet . Ghc.collectPatBinders'
 
 --------------------------------------------------------------------------------
 -- Guarded Right-hand Sides
@@ -253,11 +257,23 @@ grhssCase :: Ghc.GRHSs Ghc.GhcRn (Ghc.LHsExpr Ghc.GhcRn)
          -> EnvReader (Maybe (Ghc.GRHSs Ghc.GhcRn (Ghc.LHsExpr Ghc.GhcRn)))
 grhssCase Ghc.GRHSs {..} = do
   (localBindsRes, names)
-    <- dealWithLocalBinds grhssLocalBinds
+    <- dealWithLocalBinds
+#if MIN_VERSION_ghc(9,2,0)
+         grhssLocalBinds
+#else
+         (Ghc.unLoc grhssLocalBinds)
+#endif
 
   grhsRes <- addScopedVars names $ recurse grhssGRHSs
   pure $ Just
-    Ghc.GRHSs { Ghc.grhssGRHSs = grhsRes, grhssLocalBinds = localBindsRes, .. }
+    Ghc.GRHSs { Ghc.grhssGRHSs = grhsRes
+#if MIN_VERSION_ghc(9,2,0)
+              , grhssLocalBinds = localBindsRes
+#else
+              , grhssLocalBinds = localBindsRes <$ grhssLocalBinds
+#endif
+              , ..
+              }
 
 dealWithBind :: VarSet
              -> (Ghc.LHsBind Ghc.GhcRn, [Ghc.Name])
@@ -329,12 +345,12 @@ grhsCase (Ghc.GRHS x guards body) = do
 -- TODO could combine with hsVar case to allow for "quick failure"
 hsLetCase :: Ghc.HsExpr Ghc.GhcRn
           -> EnvReader (Maybe (Ghc.HsExpr Ghc.GhcRn))
-hsLetCase (Ghc.HsLet x localBinds inExpr) = do
+hsLetCase (Ghc.HsLet' x (Ghc.L loc localBinds) inExpr) = do
   (bindsRes, names) <- dealWithLocalBinds localBinds
 
   inExprRes <- addScopedVars names $ recurse inExpr
   pure . Just $
-    Ghc.HsLet x bindsRes inExprRes
+    Ghc.HsLet' x (Ghc.L loc bindsRes) inExprRes
 hsLetCase _ = pure Nothing
 
 dealWithLocalBinds
@@ -347,7 +363,7 @@ dealWithLocalBinds = \case
       let binds = Ghc.bagToList
                 . Ghc.unionManyBags
                 $ map snd bindPairs :: [Ghc.LHsBind Ghc.GhcRn]
-          names = map (foldMap $ Ghc.collectHsBindBinders Ghc.CollNoDictBinders)
+          names = map (foldMap Ghc.collectHsBindBinders')
                       binds
           resultNames = mkVarSet $ concat names
 
@@ -416,10 +432,10 @@ dealWithStmt = \case
     bodyRes <- lift . addScopedVars names $ recurse body
     pure $ Ghc.BindStmt x lpat bodyRes
 
-  Ghc.LetStmt x localBinds -> do
+  Ghc.LetStmt' x (Ghc.L loc localBinds) -> do
     (bindsRes, names) <- lift $ dealWithLocalBinds localBinds
     tell names
-    pure $ Ghc.LetStmt x bindsRes
+    pure $ Ghc.LetStmt' x (Ghc.L loc bindsRes)
 
   Ghc.ApplicativeStmt x pairs mbJoin -> do
     let dealWithAppArg = \case
@@ -492,7 +508,7 @@ overVarSet :: (VarSet -> VarSet) -> Env -> Env
 overVarSet f env = env { varSet = f $ varSet env }
 
 getOccNameFS :: Ghc.Name -> Ghc.LexicalFastString
-getOccNameFS = Ghc.LexicalFastString . Ghc.occNameFS . Ghc.getOccName
+getOccNameFS = Ghc.mkLexicalFastString . Ghc.occNameFS . Ghc.getOccName
 
 mkVarSet :: [Ghc.Name] -> VarSet
 mkVarSet names = M.fromList $ (getOccNameFS &&& id) <$> names
@@ -560,7 +576,7 @@ findShowLevWanted names ct
   | Ghc.CDictCan{..} <- ct
   , showLevClassName names == Ghc.getName cc_class
   , [Ghc.TyConApp tyCon [], arg2] <- cc_tyargs
-  = Just $ if Ghc.getName tyCon == Ghc.getName Ghc.liftedRepTyCon
+  = Just $ if Ghc.getName tyCon == Ghc.liftedRepName
        then Right (arg2, ct)
        else Left (arg2, ct)
   | otherwise = Nothing
@@ -657,42 +673,46 @@ liftDict succ_inst ty dict = Ghc.evDFunApp (Ghc.is_dfun succ_inst) [ty] [dict]
 --------------------------------------------------------------------------------
 
 -- | Levity polymorphic 'Show'
-class ShowLev (rep :: RuntimeRep) (a :: TYPE rep) where
+class ShowLev (rep :: Exts.RuntimeRep) (a :: Exts.TYPE rep) where
   showLev :: a -> String
 
-instance ShowLev 'IntRep Int# where
+instance ShowLev 'Exts.IntRep Exts.Int# where
   showLev i = show $ I# i
 
-instance ShowLev 'Int8Rep Int8# where
+#if MIN_VERSION_base(4,16,0)
+instance ShowLev 'Exts.Int8Rep Exts.Int8# where
   showLev i = show $ I8# i
 
-instance ShowLev 'Int16Rep Int16# where
+instance ShowLev 'Exts.Int16Rep Exts.Int16# where
   showLev i = show $ I16# i
 
-instance ShowLev 'Int32Rep Int32# where
+instance ShowLev 'Exts.Int32Rep Exts.Int32# where
   showLev i = show $ I32# i
+#endif
 
-instance ShowLev 'WordRep Word# where
+instance ShowLev 'Exts.WordRep Exts.Word# where
   showLev w = show $ W# w
 
-instance ShowLev 'Word8Rep Word8# where
+#if MIN_VERSION_base(4,16,0)
+instance ShowLev 'Exts.Word8Rep Exts.Word8# where
   showLev w = show $ W8# w
 
-instance ShowLev 'Word16Rep Word16# where
+instance ShowLev 'Exts.Word16Rep Exts.Word16# where
   showLev w = show $ W16# w
 
-instance ShowLev 'Word32Rep Word32# where
+instance ShowLev 'Exts.Word32Rep Exts.Word32# where
   showLev w = show $ W32# w
+#endif
 
-instance ShowLev 'FloatRep Float# where
-  showLev f = show $ F# f
+instance ShowLev 'Exts.FloatRep Exts.Float# where
+  showLev f = show $ Exts.F# f
 
-instance ShowLev 'DoubleRep Double# where
-  showLev d = show $ D# d
+instance ShowLev 'Exts.DoubleRep Exts.Double# where
+  showLev d = show $ Exts.D# d
 
 newtype ShowWrapper a = MkShowWrapper a
 
-instance ShowLev LiftedRep a => Show (ShowWrapper a) where
+instance ShowLev Exts.LiftedRep a => Show (ShowWrapper a) where
   show (MkShowWrapper a) = showLev a
 
 class Succeed a where
