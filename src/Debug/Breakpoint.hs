@@ -80,13 +80,18 @@ printAndWaitM srcLoc vars = printAndWait srcLoc vars $ pure ()
 printAndWaitIO :: MonadIO m => String -> M.Map String String -> m ()
 printAndWaitIO srcLoc vars = liftIO $ do
   traceIO $ intercalate "\n"
-    [ "### Breakpoint Hit ###"
-    , "(" <> srcLoc <> ")"
+    [ "\ESC[31m\STX### Breakpoint Hit ###\ESC[m\STX"
+    , "\ESC[37m\STX(" <> srcLoc <> ")\ESC[m\STX"
     , printVars vars
-    , "Press enter to continue"
+    , "\ESC[32m\STXPress enter to continue\ESC[m\STX"
     ]
   _ <- getLine
   pure ()
+
+printVars :: M.Map String String -> String
+printVars vars =
+  let mkLine (k, v) = "\ESC[36m\STX" <> k <> " = \ESC[m\STX" <> v
+   in unlines $ mkLine <$> M.toList vars
 
 -- | Sets a breakpoint in pure code
 bp :: a -> a
@@ -106,11 +111,6 @@ bpIO = pure ()
 
 getSrcLoc :: String
 getSrcLoc = ""
-
-printVars :: M.Map String String -> String
-printVars vars =
-  let mkLine (k, v) = k <> " = " <> v
-   in unlines $ mkLine <$> M.toList vars
 
 --------------------------------------------------------------------------------
 -- Plugin
