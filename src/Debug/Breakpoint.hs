@@ -38,6 +38,7 @@ import           Data.Data hiding (IntRep, FloatRep)
 import           Data.Either
 import           Data.Functor
 import qualified Data.Graph as Graph
+import           Data.List (intercalate)
 import qualified Data.Map.Strict as M
 import           Data.Maybe
 import           Data.Monoid (Any(..))
@@ -45,7 +46,11 @@ import           Data.Traversable (for)
 import           Debug.Trace (traceIO)
 import qualified GHC.Exts as Exts
 import           GHC.Int
+#if MIN_VERSION_ghc(9,0,0)
 import qualified GHC.Tc.Plugin as Plugin
+#else
+import qualified TcPluginM as Plugin
+#endif
 import           GHC.Word
 import           System.IO.Unsafe (unsafePerformIO)
 
@@ -74,10 +79,12 @@ printAndWaitM srcLoc vars = printAndWait srcLoc vars $ pure ()
 
 printAndWaitIO :: MonadIO m => String -> M.Map String String -> m ()
 printAndWaitIO srcLoc vars = liftIO $ do
-  traceIO "### Breakpoint Hit ###"
-  traceIO $ "(" <> srcLoc <> ")"
-  printVars vars
-  traceIO "Press enter to continue"
+  traceIO $ intercalate "\n"
+    [ "### Breakpoint Hit ###"
+    , "(" <> srcLoc <> ")"
+    , printVars vars
+    , "Press enter to continue"
+    ]
   _ <- getLine
   pure ()
 
@@ -100,10 +107,10 @@ bpIO = pure ()
 getSrcLoc :: String
 getSrcLoc = ""
 
-printVars :: M.Map String String -> IO ()
-printVars vars = do
+printVars :: M.Map String String -> String
+printVars vars =
   let mkLine (k, v) = k <> " = " <> v
-  traceIO . unlines $ mkLine <$> M.toList vars
+   in unlines $ mkLine <$> M.toList vars
 
 --------------------------------------------------------------------------------
 -- Plugin
@@ -245,6 +252,9 @@ matchCase Ghc.Match {..} = do
   grhRes <- addScopedVars names $ recurse m_grhss
   pure $ Just
     Ghc.Match { Ghc.m_grhss = grhRes, .. }
+#if !MIN_VERSION_ghc(9,0,0)
+matchCase _ = pure Nothing
+#endif
 
 extractVarPats :: Ghc.LPat Ghc.GhcRn -> VarSet
 extractVarPats = mkVarSet . Ghc.collectPatBinders'
@@ -274,6 +284,9 @@ grhssCase Ghc.GRHSs {..} = do
 #endif
               , ..
               }
+#if !MIN_VERSION_ghc(9,0,0)
+grhssCase _ = pure Nothing
+#endif
 
 dealWithBind :: VarSet
              -> (Ghc.LHsBind Ghc.GhcRn, [Ghc.Name])
@@ -337,6 +350,9 @@ grhsCase (Ghc.GRHS x guards body) = do
   (guardsRes, names) <- runWriterT $ dealWithStatements guards
   bodyRes <- addScopedVars names $ recurse body
   pure . Just $ Ghc.GRHS x guardsRes bodyRes
+#if !MIN_VERSION_ghc(9,0,0)
+grhsCase _ = pure Nothing
+#endif
 
 --------------------------------------------------------------------------------
 -- Let Binds (Non-do)
@@ -426,11 +442,11 @@ dealWithStmt :: (Data (Ghc.Stmt Ghc.GhcRn body), Data body)
              => Ghc.Stmt Ghc.GhcRn body
              -> WriterT VarSet EnvReader (Ghc.Stmt Ghc.GhcRn body)
 dealWithStmt = \case
-  Ghc.BindStmt x lpat body -> do
+  Ghc.BindStmt' x lpat body bindExpr failExpr -> do
     let names = extractVarPats lpat
     tell names
     bodyRes <- lift . addScopedVars names $ recurse body
-    pure $ Ghc.BindStmt x lpat bodyRes
+    pure $ Ghc.BindStmt' x lpat bodyRes bindExpr failExpr
 
   Ghc.LetStmt' x (Ghc.L loc localBinds) -> do
     (bindsRes, names) <- lift $ dealWithLocalBinds localBinds
@@ -446,6 +462,9 @@ dealWithStmt = \case
             tell $ extractVarPats bv_pattern
             (stmtsRes, _) <- lift . runWriterT $ dealWithStatements app_stmts
             pure a {Ghc.app_stmts = stmtsRes}
+#if !MIN_VERSION_ghc(9,0,0)
+          a -> lift $ gmapM recurse a
+#endif
     pairsRes <- (traverse . traverse) dealWithAppArg pairs
     pure $ Ghc.ApplicativeStmt x pairsRes mbJoin
 
@@ -472,6 +491,9 @@ hsProcCase (Ghc.HsProc x1 lpat cmdTop) = do
           _ -> empty -- TODO what other cases should be handled?
 
         pure $ Ghc.HsCmdTop x2 cmdRes
+#if !MIN_VERSION_ghc(9,0,0)
+      _ -> empty
+#endif
     pure $ Ghc.HsProc x1 lpat cmdTopRes
 hsProcCase _ = pure Nothing
 
@@ -488,7 +510,7 @@ newtype OrderedSrcSpan = OrderedSrcSpan Ghc.SrcSpan
 instance Ord OrderedSrcSpan where
   compare = coerce Ghc.leftmost_smallest
 
-type VarSet = M.Map Ghc.LexicalFastString Ghc.Name
+type VarSet = M.Map Ghc.LexicalFastString' Ghc.Name
 
 data Env = MkEnv
   { varSet :: !VarSet
@@ -507,7 +529,7 @@ data Env = MkEnv
 overVarSet :: (VarSet -> VarSet) -> Env -> Env
 overVarSet f env = env { varSet = f $ varSet env }
 
-getOccNameFS :: Ghc.Name -> Ghc.LexicalFastString
+getOccNameFS :: Ghc.Name -> Ghc.LexicalFastString'
 getOccNameFS = Ghc.mkLexicalFastString . Ghc.occNameFS . Ghc.getOccName
 
 mkVarSet :: [Ghc.Name] -> VarSet
@@ -663,7 +685,7 @@ buildUnshowableDict ty = do
   let tyString = Ghc.showSDocUnsafe $ Ghc.pprTypeForUser ty
   str <- Ghc.mkStringExpr $ "<" <> tyString <> ">"
   pure . Ghc.EvExpr $
-    Ghc.mkCoreLams [Ghc.mkWildValBinder Ghc.oneDataConTy ty] str
+    Ghc.mkCoreLams [Ghc.mkWildValBinder' ty] str
 
 liftDict :: Ghc.ClsInst -> Ghc.Type -> Ghc.EvExpr -> Ghc.EvTerm
 liftDict succ_inst ty dict = Ghc.evDFunApp (Ghc.is_dfun succ_inst) [ty] [dict]

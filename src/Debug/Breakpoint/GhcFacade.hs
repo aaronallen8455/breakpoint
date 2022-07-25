@@ -11,9 +11,11 @@ module Debug.Breakpoint.GhcFacade
   , collectPatBinders'
   , noLocA'
   , locA'
+  , mkWildValBinder'
   , pattern HsLet'
   , pattern LetStmt'
   , pattern ExplicitList'
+  , pattern BindStmt'
   ) where
 
 #if MIN_VERSION_ghc(9,2,0)
@@ -49,6 +51,7 @@ import           GHC.Tc.Utils.TcType as Ghc
 import           GHC.Core.Type as Ghc
 import           GHC.Core.TyCon as Ghc
 import           GHC.Types.TyThing.Ppr as Ghc
+import           GHC.Hs.Expr as Ghc
 
 #elif MIN_VERSION_ghc(9,0,0)
 import           GHC.Driver.Plugins as Ghc hiding (TcPlugin)
@@ -86,18 +89,54 @@ import           GHC.Driver.Types as Ghc
 import           GHC.Hs.Expr as Ghc
 import           GHC.Hs.Pat as Ghc
 import           GHC.Hs.Decls as Ghc
+
+#elif MIN_VERSION_ghc(8,10,0)
+import           GHC.Hs.Expr as Ghc
+import           GHC.Hs.Extension as Ghc
+import           GHC.Hs.Binds as Ghc
+import           SrcLoc as Ghc
+import           GHC.Hs.Utils as Ghc
+import           Name as Ghc
+import           GHC.Hs.Pat as Ghc
+import           FastString as Ghc
+import           TysWiredIn as Ghc
+import           InstEnv as Ghc
+import           TcEvidence as Ghc
+import           TyCoRep as Ghc
+import           MkCore as Ghc
+import           PprTyThing as Ghc
+import           Outputable as Ghc
+import           TcRnTypes as Ghc
+import           Type as Ghc
+import           TcType as Ghc
+import           Id as Ghc
+import           Class as Ghc
+import           Constraint as Ghc
+import           Module as Ghc
+import           HscTypes as Ghc
+import           TyCon as Ghc
+import           Bag as Ghc
+import           BasicTypes as Ghc
+import           UniqSet as Ghc
+import           NameEnv as Ghc
+import           IfaceEnv as Ghc
+import           Finder as Ghc hiding (findImportedModule)
+import           TcPluginM as Ghc hiding (lookupOrig, getTopEnv, getEnvs, newUnique)
+import           GHC.Hs.Decls as Ghc
+import           TcRnMonad as Ghc
+import           Plugins as Ghc hiding (TcPlugin)
 #endif
 
 liftedRepName :: Ghc.Name
 #if MIN_VERSION_ghc(9,2,0)
 liftedRepName = Ghc.getName Ghc.liftedRepTyCon
-#elif MIN_VERSION_ghc(9,0,0)
+#else
 liftedRepName = Ghc.getName Ghc.liftedRepDataCon
 #endif
 
 #if MIN_VERSION_ghc(9,2,0)
 type LexicalFastString' = Ghc.LexicalFastString
-#elif MIN_VERSION_ghc(9,0,0)
+#else
 type LexicalFastString' = Ghc.FastString
 #endif
 
@@ -106,7 +145,7 @@ fromLexicalFastString :: LexicalFastString' -> Ghc.FastString
 #if MIN_VERSION_ghc(9,2,0)
 mkLexicalFastString = Ghc.LexicalFastString
 fromLexicalFastString (Ghc.LexicalFastString fs) = fs
-#elif MIN_VERSION_ghc(9,0,0)
+#else
 mkLexicalFastString = id
 fromLexicalFastString = id
 #endif
@@ -140,6 +179,13 @@ locA' = Ghc.locA
 #else
 locA' :: Ghc.SrcSpan -> Ghc.SrcSpan
 locA' = id
+#endif
+
+mkWildValBinder' :: Ghc.Type -> Ghc.Id
+#if MIN_VERSION_ghc(9,0,0)
+mkWildValBinder' = Ghc.mkWildValBinder Ghc.oneDataConTy
+#else
+mkWildValBinder' = Ghc.mkWildValBinder
 #endif
 
 pattern HsLet'
@@ -179,4 +225,25 @@ pattern ExplicitList' x exprs = Ghc.ExplicitList x exprs
 pattern ExplicitList' x exprs <- Ghc.ExplicitList x _ exprs
   where
     ExplicitList' x exprs = Ghc.ExplicitList x Nothing exprs
+#endif
+
+#if MIN_VERSION_ghc(9,0,0)
+mkSyntaxExprs :: x -> (SyntaxExpr Ghc.GhcRn, SyntaxExpr Ghc.GhcRn, x)
+mkSyntaxExprs x = (Ghc.noSyntaxExpr, Ghc.noSyntaxExpr, x)
+#endif
+
+pattern BindStmt'
+  :: Ghc.XBindStmt Ghc.GhcRn Ghc.GhcRn body
+  -> Ghc.LPat Ghc.GhcRn
+  -> body
+  -> SyntaxExpr Ghc.GhcRn
+  -> SyntaxExpr Ghc.GhcRn
+  -> Ghc.Stmt Ghc.GhcRn body
+#if MIN_VERSION_ghc(9,0,0)
+pattern BindStmt' x pat body expr1 expr2
+    <- Ghc.BindStmt x pat (mkSyntaxExprs -> (expr1, expr2, body))
+  where
+    BindStmt' x pat body _ _ = Ghc.BindStmt x pat body
+#else
+pattern BindStmt' x pat body bindExpr failExpr = Ghc.BindStmt x pat body bindExpr failExpr
 #endif

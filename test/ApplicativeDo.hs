@@ -42,4 +42,3 @@ test2 = fromMaybe mempty $ do
   let m = const captureVars a -- NB: need to reference 'a' here b/c of ApplicativeDo
   b <- Just False
   pure m
-
