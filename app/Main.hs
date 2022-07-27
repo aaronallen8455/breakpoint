@@ -21,7 +21,7 @@ test = do
       x = "one"
       y = 2 :: Int
       z = id :: Bool -> Bool
-  bpIO
+  breakpointIO
   x <- getLine
-  bpIO
+  breakpointIO
   pure ()

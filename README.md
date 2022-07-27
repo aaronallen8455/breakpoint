@@ -7,9 +7,10 @@ implementing that functionality using a plugin.
 ### How to use it
 
 Add `breakpoint` as a dependency to your project then enable breakpoints in a
-given module by added `{-# OPTIONS_GHC -fplugin Debug.Breakpoint #-}` to the top
-of the file. Then import the `Debug.Breakpoint` module and use the `bp`, `bpIO`,
-or `bpM` functions as appropriate to set a breakpoint.
+given module by added `{-# OPTIONS_GHC -fplugin Debug.Breakpoint #-}` to the
+top of the file. Then import the `Debug.Breakpoint` module and use the
+`breakpoint`, `breakpointIO`, or `breakpointM` functions as appropriate to set
+a breakpoint.
 
 For example:
 ```haskell
@@ -19,7 +20,7 @@ main = do
       x = "one"
       y = 2 :: Int
       z = id :: Bool -> Bool
-  bpIO
+  breakpointIO
   pure ()
 ```
 

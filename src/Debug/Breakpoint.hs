@@ -21,9 +21,9 @@ module Debug.Breakpoint
   , printAndWait
   , printAndWaitM
   , printAndWaitIO
-  , bp
-  , bpM
-  , bpIO
+  , breakpoint
+  , breakpointM
+  , breakpointIO
   , getSrcLoc
   ) where
 
@@ -94,20 +94,20 @@ printVars vars =
    in unlines $ mkLine <$> M.toList vars
 
 -- | Sets a breakpoint in pure code
-bp :: a -> a
-bp = id
+breakpoint :: a -> a
+breakpoint = id
 
 -- | Sets a breakpoint in an arbitrary 'Applicative'. Uses 'unsafePerformIO'
 -- which means that laziness and common sub-expression elimination can result
 -- in the breakpoint not being hit as expected. For this reason, you should
--- prefer 'bpIO' if a `MonadIO` instance is available.
-bpM :: Applicative m => m ()
-bpM = pure ()
+-- prefer 'breakpointIO' if a `MonadIO` instance is available.
+breakpointM :: Applicative m => m ()
+breakpointM = pure ()
 
 -- | Sets a breakpoint in an 'IO' based 'Monad'. You should favor this over
--- 'bpM' if the monad can perform IO.
-bpIO :: MonadIO m => m ()
-bpIO = pure ()
+-- 'breakpointM' if the monad can perform IO.
+breakpointIO :: MonadIO m => m ()
+breakpointIO = pure ()
 
 getSrcLoc :: String
 getSrcLoc = ""
@@ -135,9 +135,9 @@ renameAction gblEnv group = do
   captureVarsName <- Ghc.lookupOrig breakpointMod (Ghc.mkVarOcc "captureVars")
   showLevName <- Ghc.lookupOrig breakpointMod (Ghc.mkVarOcc "showLev")
   fromListName <- Ghc.lookupOrig breakpointMod (Ghc.mkVarOcc "fromAscList")
-  bpName <- Ghc.lookupOrig breakpointMod (Ghc.mkVarOcc "bp")
-  bpMName <- Ghc.lookupOrig breakpointMod (Ghc.mkVarOcc "bpM")
-  bpIOName <- Ghc.lookupOrig breakpointMod (Ghc.mkVarOcc "bpIO")
+  bpName <- Ghc.lookupOrig breakpointMod (Ghc.mkVarOcc "breakpoint")
+  bpMName <- Ghc.lookupOrig breakpointMod (Ghc.mkVarOcc "breakpointM")
+  bpIOName <- Ghc.lookupOrig breakpointMod (Ghc.mkVarOcc "breakpointIO")
   printAndWaitName <- Ghc.lookupOrig breakpointMod (Ghc.mkVarOcc "printAndWait")
   printAndWaitMName <- Ghc.lookupOrig breakpointMod (Ghc.mkVarOcc "printAndWaitM")
   printAndWaitIOName <- Ghc.lookupOrig breakpointMod (Ghc.mkVarOcc "printAndWaitIO")
