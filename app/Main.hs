@@ -21,6 +21,11 @@ test = do
       x = "one"
       y = 2 :: Int
       z = id :: Bool -> Bool
+  forkIO $ do
+    threadDelay 1000000
+    putStrLn "..."
+    threadDelay 1000000
+    putStrLn "..."
   breakpointIO
   x <- getLine
   breakpointIO

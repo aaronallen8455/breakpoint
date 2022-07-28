@@ -1,3 +1,4 @@
+{-# LANGUAGE ForeignFunctionInterface #-}
 {-# LANGUAGE CPP #-}
 {-# LANGUAGE ViewPatterns #-}
 {-# LANGUAGE DataKinds #-}
@@ -85,7 +86,7 @@ printAndWaitIO srcLoc vars = liftIO $ do
     , printVars vars
     , "\ESC[32m\STXPress enter to continue\ESC[m\STX"
     ]
-  _ <- getLine
+  _ <- getcharFF
   pure ()
 
 printVars :: M.Map String String -> String
@@ -111,6 +112,10 @@ breakpointIO = pure ()
 
 getSrcLoc :: String
 getSrcLoc = ""
+
+-- Use an "unsafe" foreign function to more or less stop the runtime. Calls to
+-- 'threadDelay' still expire according to wall time, so it's not a true stop.
+foreign import ccall unsafe "stdio.h getchar" getcharFF :: IO Int
 
 --------------------------------------------------------------------------------
 -- Plugin
