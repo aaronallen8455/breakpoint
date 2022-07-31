@@ -113,8 +113,7 @@ breakpointIO = pure ()
 getSrcLoc :: String
 getSrcLoc = ""
 
--- Use an "unsafe" foreign function to more or less stop the runtime. Calls to
--- 'threadDelay' still expire according to wall time, so it's not a true stop.
+-- Use an "unsafe" foreign function to more or less stop the runtime.
 foreign import ccall unsafe "stdio.h getchar" getcharFF :: IO Int
 
 --------------------------------------------------------------------------------

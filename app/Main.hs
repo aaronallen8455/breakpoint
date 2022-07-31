@@ -2,6 +2,7 @@
 {-# OPTIONS_GHC -fplugin Debug.Breakpoint #-}
 module Main where
 
+import           Control.Monad
 import           Control.Concurrent
 import           Control.Concurrent.QSem
 import           System.IO.Unsafe
@@ -11,7 +12,7 @@ import Debug.Breakpoint
 import Debug.Trace
 
 main :: IO ()
-main = pure ()
+main = test
 
 data F = F
 
@@ -21,11 +22,12 @@ test = do
       x = "one"
       y = 2 :: Int
       z = id :: Bool -> Bool
+  putStrLn "start"
   forkIO $ do
     threadDelay 1000000
-    putStrLn "..."
+    putStrLn "1"
     threadDelay 1000000
-    putStrLn "..."
+    putStrLn "2"
   breakpointIO
   x <- getLine
   breakpointIO
