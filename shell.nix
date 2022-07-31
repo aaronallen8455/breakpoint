@@ -6,5 +6,6 @@ mkShell {
   buildInputs = [
     haskell.compiler.ghc922
     cabal-install
+    haskell-ci
   ];
 }

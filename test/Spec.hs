@@ -174,7 +174,8 @@ listComprehension = test16 @?= M.fromList [("a", "True"), ("b", "False")]
 test16 = head [ captureVars | let b = False, a <- [True] ]
 
 arrowNotation :: Assertion
-arrowNotation = test17 @?= M.fromList [("a", "2"), ("b", "0"), ("x", "1"), ("go", "<Int -> Map String String>")]
+arrowNotation = M.delete "go" test17 @?= M.fromList [("a", "2"), ("b", "0"), ("x", "1")]
+-- "go" has different printed type sigs for 9.0 vs 8.10
 
 test17 :: M.Map String String
 test17 = go (1 :: Int) where

@@ -2,10 +2,12 @@ cabal-version:      3.0
 name:               breakpoint
 version:            0.1.0.0
 synopsis:
+  Set breakpoints using a GHC plugin
 
--- A longer description of the package.
--- description:
-homepage:
+description:
+  A plugin that allows you to set breakpoints for debugging purposes.
+  .
+  See the [README](https://github.com/aaronallen8455/breakpoint#breakpoint) for details.
 
 -- A URL where users can report bugs.
 -- bug-reports:
@@ -14,6 +16,7 @@ license-file:       LICENSE
 author:             Aaron Allen
 maintainer:         aaronallen8455@gmail.com
 tested-with: GHC==9.2.2, GHC==9.0.2, GHC==8.10.7
+bug-reports: https://github.com/aaronallen8455/breakpoint/issues
 
 -- A copyright notice.
 -- copyright:

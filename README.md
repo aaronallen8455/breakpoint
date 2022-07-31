@@ -58,9 +58,9 @@ showing the location of the breakpoint and the free variables that are visible
 from the callsite, this includes function arguments, let bindings, where binds,
 monadic binds, pattern binds, etc.
 
-The pinted values are limited by the presence of a `Show` instance. If its type
-does have a `Show` instance then that will be used, otherwise the output will
-contain the type of the value within angle brackets.
+If the type of a value has a `Show` instance then that will be used to generate
+the printed value, otherwise the output will contain the type of the value
+within angle brackets.
 
 Execution of the program effectively halts on waiting for user input. In
 concurrent programs, all threads will be stopped, not just the one executing

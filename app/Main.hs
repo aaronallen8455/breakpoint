@@ -26,9 +26,15 @@ test = do
   forkIO $ do
     threadDelay 1000000
     putStrLn "1"
+    breakpointIO
     threadDelay 1000000
     putStrLn "2"
   breakpointIO
+  putStrLn "3"
+  threadDelay 1000000
+  putStrLn "4"
+  threadDelay 1000000
+  putStrLn "5"
   x <- getLine
   breakpointIO
   pure ()
