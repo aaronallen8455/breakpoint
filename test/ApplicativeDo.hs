@@ -34,7 +34,7 @@ test1 = do
   return captureVars
 
 monadicBindsScoped :: Assertion
-monadicBindsScoped = test2 @?= M.fromList [("a", "True")]
+monadicBindsScoped = M.delete "m" test2 @?= M.fromList [("a", "True")]
 
 test2 :: M.Map String String
 test2 = fromMaybe mempty $ do

@@ -31,7 +31,7 @@ testTree =
     , testCase "monadic binds scoped" monadicBindsScoped
     , testCase "do block let bind" doBlockLetBind
     , testCase "list comprehension" listComprehension
-    ,  testCase "arrow notation" arrowNotation
+    , testCase "arrow notation" arrowNotation
     , testCase "record field bindings" recFieldBindings
     , testCase "record wild cards" recWildCards
     , ApDo.testTree
@@ -74,7 +74,7 @@ test4 =
    in captureVars
 
 nestedInLet :: Assertion
-nestedInLet = test5 1 @?= M.fromList [("a", "1"), ("b", "2"), ("c", "3")]
+nestedInLet = M.delete "x" (test5 1) @?= M.fromList [("a", "1"), ("b", "2"), ("c", "3")]
 
 test5 :: Int -> M.Map String String
 test5 a =
@@ -123,7 +123,7 @@ test10 :: () -> M.Map String String
 test10 = \a -> captureVars
 
 letScoping :: Assertion
-letScoping = test11 @?= M.fromList [("b", "True"), ("c", "False")]
+letScoping = M.delete "a" test11 @?= M.fromList [("b", "True"), ("c", "False")]
 
 test11 :: M.Map String String
 test11 =
@@ -150,7 +150,7 @@ test13 = fromMaybe mempty $ do
   pure captureVars
 
 monadicBindsScoped :: Assertion
-monadicBindsScoped = test14 @?= M.fromList [("a", "True")]
+monadicBindsScoped = M.delete "m" test14 @?= M.fromList [("a", "True")]
 
 test14 :: M.Map String String
 test14 = fromMaybe mempty $ do
@@ -174,7 +174,7 @@ listComprehension = test16 @?= M.fromList [("a", "True"), ("b", "False")]
 test16 = head [ captureVars | let b = False, a <- [True] ]
 
 arrowNotation :: Assertion
-arrowNotation = test17 @?= M.fromList [("a", "2"), ("b", "0"), ("x", "1")]
+arrowNotation = test17 @?= M.fromList [("a", "2"), ("b", "0"), ("x", "1"), ("go", "<Int -> Map String String>")]
 
 test17 :: M.Map String String
 test17 = go (1 :: Int) where

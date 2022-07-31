@@ -40,7 +40,7 @@ import           Data.Either
 import           Data.Functor
 import qualified Data.Graph as Graph
 import           Data.List (intercalate)
-import qualified Data.Map.Strict as M
+import qualified Data.Map.Lazy as M
 import           Data.Maybe
 import           Data.Monoid (Any(..))
 import           Data.Traversable (for)
@@ -62,7 +62,9 @@ import qualified Debug.Breakpoint.GhcFacade as Ghc
 --------------------------------------------------------------------------------
 
 -- | Constructs a lazy 'Map' from the names of all visible variables at the call
--- site to a string representation of their value.
+-- site to a string representation of their value. Be careful about binding this
+-- to a variable because that variable will also be captured, resulting in an
+-- infinite loop if that element of the Map is evaluated.
 captureVars :: M.Map String String
 captureVars = mempty
 
@@ -293,60 +295,58 @@ grhssCase _ = pure Nothing
 #endif
 
 dealWithBind :: VarSet
-             -> (Ghc.LHsBind Ghc.GhcRn, [Ghc.Name])
+             -> Ghc.LHsBind Ghc.GhcRn
              -> EnvReader (Ghc.LHsBind Ghc.GhcRn)
-dealWithBind resultNames (lbind, names) = for lbind $ \bind -> do
-  let resNameExcl = resultNames M.\\ mkVarSet names
-  case bind of
-    Ghc.FunBind {..} -> do
-      (matchesRes, Any containsTarget)
-        <- listen
-         . addScopedVars resNameExcl
-         $ recurse fun_matches
-      -- be sure to use the result names on the right so that they are overriden
-      -- by any shadowing vars inside the expr.
-      let rhsVars
-            | containsTarget
-            = Ghc.mkUniqSet . M.elems
-              . (<> resNameExcl) . mkVarSet
-              $ Ghc.nonDetEltsUniqSet fun_ext
-            | otherwise = fun_ext
-      pure Ghc.FunBind { Ghc.fun_matches = matchesRes, Ghc.fun_ext = rhsVars, .. }
+dealWithBind resultNames lbind = for lbind $ \case
+  Ghc.FunBind {..} -> do
+    (matchesRes, Any containsTarget)
+      <- listen
+       . addScopedVars resultNames
+       $ recurse fun_matches
+    -- be sure to use the result names on the right so that they are overriden
+    -- by any shadowing vars inside the expr.
+    let rhsVars
+          | containsTarget
+          = Ghc.mkUniqSet . M.elems
+            . (<> resultNames) . mkVarSet
+            $ Ghc.nonDetEltsUniqSet fun_ext
+          | otherwise = fun_ext
+    pure Ghc.FunBind { Ghc.fun_matches = matchesRes, Ghc.fun_ext = rhsVars, .. }
 
-    Ghc.PatBind {..} -> do
-      (rhsRes, Any containsTarget)
-        <- listen
-         . addScopedVars resNameExcl
-         $ recurse pat_rhs
-      let rhsVars
-            | containsTarget
-            = Ghc.mkUniqSet . M.elems
-              . (<> resNameExcl) . mkVarSet
-              $ Ghc.nonDetEltsUniqSet pat_ext
-            | otherwise = pat_ext
-      pure Ghc.PatBind { Ghc.pat_rhs = rhsRes, pat_ext = rhsVars, .. }
+  Ghc.PatBind {..} -> do
+    (rhsRes, Any containsTarget)
+      <- listen
+       . addScopedVars resultNames
+       $ recurse pat_rhs
+    let rhsVars
+          | containsTarget
+          = Ghc.mkUniqSet . M.elems
+            . (<> resultNames) . mkVarSet
+            $ Ghc.nonDetEltsUniqSet pat_ext
+          | otherwise = pat_ext
+    pure Ghc.PatBind { Ghc.pat_rhs = rhsRes, pat_ext = rhsVars, .. }
 
-    -- Does this not occur in the renamer?
-    Ghc.VarBind {..} -> do
-      rhsRes
-        <- addScopedVars resNameExcl
-         $ recurse var_rhs
-      pure Ghc.VarBind { Ghc.var_rhs = rhsRes, .. }
+  -- Does this not occur in the renamer?
+  Ghc.VarBind {..} -> do
+    rhsRes
+      <- addScopedVars resultNames
+       $ recurse var_rhs
+    pure Ghc.VarBind { Ghc.var_rhs = rhsRes, .. }
 
-    Ghc.PatSynBind x Ghc.PSB {..} -> do
-      (defRes, Any containsTarget)
-        <- listen
-         . addScopedVars resNameExcl
-         $ recurse psb_def
-      let rhsVars
-            | containsTarget
-            = Ghc.mkUniqSet . M.elems
-              . (<> resNameExcl) . mkVarSet
-              $ Ghc.nonDetEltsUniqSet psb_ext
-            | otherwise = psb_ext
-      pure $ Ghc.PatSynBind x Ghc.PSB { psb_def = defRes, psb_ext = rhsVars, .. }
+  Ghc.PatSynBind x Ghc.PSB {..} -> do
+    (defRes, Any containsTarget)
+      <- listen
+       . addScopedVars resultNames
+       $ recurse psb_def
+    let rhsVars
+          | containsTarget
+          = Ghc.mkUniqSet . M.elems
+            . (<> resultNames) . mkVarSet
+            $ Ghc.nonDetEltsUniqSet psb_ext
+          | otherwise = psb_ext
+    pure $ Ghc.PatSynBind x Ghc.PSB { psb_def = defRes, psb_ext = rhsVars, .. }
 
-    other -> pure other
+  other -> pure other
 
 grhsCase :: Ghc.GRHS Ghc.GhcRn (Ghc.LHsExpr Ghc.GhcRn)
          -> EnvReader (Maybe (Ghc.GRHS Ghc.GhcRn (Ghc.LHsExpr Ghc.GhcRn)))
@@ -387,12 +387,10 @@ dealWithLocalBinds = \case
                       binds
           resultNames = mkVarSet $ concat names
 
-      let bindsWithNames = zip binds names
-
       (resBindsWithNames, Any containsTarget)
         <- listen
          . fmap (`zip` names)
-         $ traverse (dealWithBind resultNames) bindsWithNames
+         $ traverse (dealWithBind resultNames) binds
 
       if not containsTarget
          then pure (hlb, resultNames) -- if no bind contained the target then we're done

@@ -55,8 +55,8 @@ z = <Bool -> Bool>
 Press enter to continue
 ```
 showing the location of the breakpoint and the free variables that are visible
-from the callsite, this includes function arguments, let bindings, monadic
-binds, pattern binds, etc.
+from the callsite, this includes function arguments, let bindings, where binds,
+monadic binds, pattern binds, etc.
 
 The pinted values are limited by the presence of a `Show` instance. If its type
 does have a `Show` instance then that will be used, otherwise the output will
