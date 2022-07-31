@@ -3,7 +3,7 @@
 The ability to set breakpoints in a program can be an extremely valuable
 debugging tool. While GHCi has built-in support for setting breakpoints, it
 suffers from several critical limitations:
-- It's extremely buggy when used with concurrent programs, such as web servers.
+- It's prohibitively buggy when used with concurrent programs, such as web servers.
 - Breakpoints can only be set in interpreted code.
 
 The `breakpoint` library solves these problems by implementing breakpoints as
@@ -12,7 +12,7 @@ a GHC plugin.
 ### Quick start guide
 
 Add `breakpoint` as a dependency to your project then enable breakpoints in a
-given module by added `{-# OPTIONS_GHC -fplugin Debug.Breakpoint #-}` to the
+given module by adding `{-# OPTIONS_GHC -fplugin Debug.Breakpoint #-}` to the
 top of the file. Then import the `Debug.Breakpoint` module and use the
 `breakpoint`, `breakpointIO`, or `breakpointM` functions as appropriate to set
 a breakpoint.
@@ -75,3 +75,5 @@ the breakpoint.
   finishes.
 - Implicit params are not currently supported
 - `RecursiveDo` binds aren't visible before they are bound, despite being in scope.
+- If there is anything buffered in `stdin` then that will interfere with the
+  blocking mechanism.

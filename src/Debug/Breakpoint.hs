@@ -44,7 +44,7 @@ import qualified Data.Map.Lazy as M
 import           Data.Maybe
 import           Data.Monoid (Any(..))
 import           Data.Traversable (for)
-import           Debug.Trace (traceIO)
+import           Debug.Trace (trace, traceIO, traceM)
 import qualified GHC.Exts as Exts
 import           GHC.Int
 #if MIN_VERSION_ghc(9,0,0)
@@ -98,20 +98,23 @@ printVars vars =
 
 -- | Sets a breakpoint in pure code
 breakpoint :: a -> a
-breakpoint = id
+breakpoint =
+  trace "Cannot set breakpoint: the Debug.Trace plugin is not active"
 
 -- | Sets a breakpoint in an arbitrary 'Applicative'. Uses 'unsafePerformIO'
 -- which means that laziness and common sub-expression elimination can result
 -- in the breakpoint not being hit as expected. For this reason, you should
 -- prefer 'breakpointIO' if a `MonadIO` instance is available.
 breakpointM :: Applicative m => m ()
-breakpointM = pure ()
+breakpointM = traceM "Cannot set breakpoint: the Debug.Trace plugin is not active"
 
 -- | Sets a breakpoint in an 'IO' based 'Monad'. You should favor this over
 -- 'breakpointM' if the monad can perform IO.
 breakpointIO :: MonadIO m => m ()
-breakpointIO = pure ()
+breakpointIO =
+  liftIO (traceIO "Cannot set breakpoint: the Debug.Trace plugin is not active")
 
+-- | Pretty prints the source code location of its call site
 getSrcLoc :: String
 getSrcLoc = ""
 
