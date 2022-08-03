@@ -18,23 +18,30 @@ data F = F
 
 test :: IO ()
 test = do
-  let w = 5# :: Int#
-      x = "one"
-      y = 2 :: Int
-      z = id :: Bool -> Bool
-  putStrLn "start"
+  putStrLn "1"
   forkIO $ do
-    threadDelay 1000000
-    putStrLn "1"
     breakpointIO
-    threadDelay 1000000
-    putStrLn "2"
-  breakpointIO
-  putStrLn "3"
-  threadDelay 1000000
-  putStrLn "4"
-  threadDelay 1000000
-  putStrLn "5"
-  x <- getLine
-  breakpointIO
-  pure ()
+    putStrLn "3"
+  threadDelay 10000000
+  putStrLn "2"
+
+--   let w = 5# :: Int#
+--       x = "one"
+--       y = 2 :: Int
+--       z = id :: Bool -> Bool
+--   putStrLn "start"
+--   forkOS $ do
+--     threadDelay 1000000
+--     putStrLn "1"
+--     breakpointIO
+--     threadDelay 1000000
+--     putStrLn "2"
+--   breakpointIO
+--   putStrLn "3"
+--   threadDelay 1000000
+--   putStrLn "4"
+--   threadDelay 1000000
+--   putStrLn "5"
+--   x <- getLine
+--   breakpointIO
+--   pure ()

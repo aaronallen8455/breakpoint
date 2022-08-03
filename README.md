@@ -64,7 +64,7 @@ within angle brackets.
 
 Execution of the program effectively halts on waiting for user input. In
 concurrent programs, all threads will be stopped, not just the one executing
-the breakpoint.
+the breakpoint (GHC >= 9.2.x only).
 
 ### Caveats
 - Currently only supports GHC version 8.10.x, 9.0.x, and 9.2.x
@@ -73,7 +73,9 @@ the breakpoint.
 - Calls to `threadDelay` are not paused by breakpoints in the sense that time
   continues to elapse, however they won't unblock until the breakpoint
   finishes.
+- `ApplicativeDo` can sometimes cause variables that are in scope to not be traced.
 - Implicit params are not currently supported
 - `RecursiveDo` binds aren't visible before they are bound, despite being in scope.
 - If there is anything buffered in `stdin` then that will interfere with the
   blocking mechanism.
+- Concurrent threads are not blocked in GHC < 9.2.x

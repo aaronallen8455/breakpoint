@@ -34,7 +34,6 @@ import           Control.Monad.IO.Class
 import           Control.Monad.Reader
 import           Control.Monad.Trans.Maybe
 import           Control.Monad.Trans.Writer.CPS
-import           Data.Coerce
 import           Data.Data hiding (IntRep, FloatRep)
 import           Data.Either
 import           Data.Functor
@@ -88,7 +87,7 @@ printAndWaitIO srcLoc vars = liftIO $ do
     , printVars vars
     , "\ESC[32m\STXPress enter to continue\ESC[m\STX"
     ]
-  _ <- getcharFF
+  _ <- blockOnInput
   pure ()
 
 printVars :: M.Map String String -> String
@@ -118,8 +117,14 @@ breakpointIO =
 getSrcLoc :: String
 getSrcLoc = ""
 
+#if MIN_VERSION_ghc(9,2,0)
 -- Use an "unsafe" foreign function to more or less stop the runtime.
-foreign import ccall unsafe "stdio.h getchar" getcharFF :: IO Int
+-- In older GHCs this can cause out of control CPU usage so settle for getLine instead
+foreign import ccall unsafe "stdio.h getchar" blockOnInput :: IO Int
+#else
+blockOnInput :: IO Int
+blockOnInput = 1 <$ getLine
+#endif
 
 --------------------------------------------------------------------------------
 -- Plugin
@@ -508,12 +513,6 @@ hsProcCase _ = pure Nothing
 
 -- The writer is for tracking if an inner expression contains the target name
 type EnvReader = WriterT Any (Reader Env)
-
-newtype OrderedSrcSpan = OrderedSrcSpan Ghc.SrcSpan
-  deriving Eq
-
-instance Ord OrderedSrcSpan where
-  compare = coerce Ghc.leftmost_smallest
 
 type VarSet = M.Map Ghc.LexicalFastString' Ghc.Name
 
