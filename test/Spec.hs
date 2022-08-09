@@ -40,6 +40,7 @@ testTree =
     -- Implicit Params
     -- Pattern synonyms
     -- recursive do
+    -- qualified do
 
 functionArgs :: Assertion
 functionArgs = test1 1 True @?= M.fromList [("b", "True"), ("i", "1")]
