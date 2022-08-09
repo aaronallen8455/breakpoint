@@ -744,5 +744,7 @@ instance ShowLev Exts.LiftedRep a => Show (ShowWrapper a) where
 class Succeed a where
   _succeed :: a -> String
 
+-- Looking up an instance of this class for any type will always succeed. To
+-- produce actual evidence, a Show dict must be provided.
 instance Show a => Succeed a where
   _succeed = show
