@@ -29,6 +29,7 @@ test = do
       x = "one"
       y = 2 :: Int
       z = id :: Bool -> Bool
+      a = MkNoShow {f1 = True, f2 = 2}
   putStrLn "start"
   forkOS $ do
     threadDelay 1000000
@@ -45,3 +46,9 @@ test = do
   x <- getLine
   breakpointIO
   pure ()
+
+data NoShow =
+  MkNoShow
+    { f1 :: Bool
+    , f2 :: Int
+    }

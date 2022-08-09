@@ -16,6 +16,7 @@ module Debug.Breakpoint.GhcFacade
   , pattern LetStmt'
   , pattern ExplicitList'
   , pattern BindStmt'
+  , mkLocalId'
   ) where
 
 #if MIN_VERSION_ghc(9,2,0)
@@ -52,6 +53,8 @@ import           GHC.Core.Type as Ghc
 import           GHC.Core.TyCon as Ghc
 import           GHC.Types.TyThing.Ppr as Ghc
 import           GHC.Hs.Expr as Ghc
+import           GHC.Core as Ghc (Expr(..))
+import           GHC.Types.TyThing as Ghc
 
 #elif MIN_VERSION_ghc(9,0,0)
 import           GHC.Driver.Plugins as Ghc hiding (TcPlugin)
@@ -82,6 +85,7 @@ import           GHC.Types.Id as Ghc
 import           GHC.Core.InstEnv as Ghc
 import           GHC.Core.Class as Ghc hiding (FunDep)
 import           GHC.Tc.Utils.TcType as Ghc
+import           GHC.Core as Ghc (Expr(..))
 import           GHC.Core.Type as Ghc
 import           GHC.Core.TyCon as Ghc
 import           GHC.Core.Ppr.TyThing as Ghc
@@ -125,6 +129,7 @@ import           TcPluginM as Ghc hiding (lookupOrig, getTopEnv, getEnvs, newUni
 import           GHC.Hs.Decls as Ghc
 import           TcRnMonad as Ghc
 import           Plugins as Ghc hiding (TcPlugin)
+import           CoreSyn as Ghc (Expr(..))
 #endif
 
 liftedRepName :: Ghc.Name
@@ -246,4 +251,11 @@ pattern BindStmt' x pat body expr1 expr2
     BindStmt' x pat body _ _ = Ghc.BindStmt x pat body
 #else
 pattern BindStmt' x pat body bindExpr failExpr = Ghc.BindStmt x pat body bindExpr failExpr
+#endif
+
+mkLocalId' :: Ghc.Name -> Ghc.Type -> Ghc.Id
+#if MIN_VERSION_ghc(9,0,0)
+mkLocalId' name = Ghc.mkLocalId name Ghc.One
+#else
+mkLocalId' = Ghc.mkLocalId
 #endif
