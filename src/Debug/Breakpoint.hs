@@ -22,9 +22,15 @@ module Debug.Breakpoint
   , printAndWait
   , printAndWaitM
   , printAndWaitIO
+  , runPrompt
+  , runPromptM
+  , runPromptIO
   , breakpoint
+  , breakpointP
   , breakpointM
+  , breakpointMP
   , breakpointIO
+  , breakpointIOP
   , getSrcLoc
   ) where
 
@@ -34,11 +40,13 @@ import           Control.Monad.IO.Class
 import           Control.Monad.Reader
 import           Control.Monad.Trans.Maybe
 import           Control.Monad.Trans.Writer.CPS
+import           Data.Char (isSpace)
 import           Data.Data hiding (IntRep, FloatRep)
 import           Data.Either
+import           Data.Foldable
 import           Data.Functor
 import qualified Data.Graph as Graph
-import           Data.List (intercalate)
+import qualified Data.List as L
 import qualified Data.Map.Lazy as M
 import           Data.Maybe
 import           Data.Monoid (Any(..))
@@ -52,6 +60,7 @@ import qualified GHC.Tc.Plugin as Plugin
 import qualified TcPluginM as Plugin
 #endif
 import           GHC.Word
+import qualified System.Console.Haskeline as HL
 import           System.IO.Unsafe (unsafePerformIO)
 
 import qualified Debug.Breakpoint.GhcFacade as Ghc
@@ -81,37 +90,84 @@ printAndWaitM srcLoc vars = printAndWait srcLoc vars $ pure ()
 
 printAndWaitIO :: MonadIO m => String -> M.Map String String -> m ()
 printAndWaitIO srcLoc vars = liftIO $ do
-  traceIO $ intercalate "\n"
-    [ "\ESC[31m\STX### Breakpoint Hit ###\ESC[m\STX"
-    , "\ESC[37m\STX(" <> srcLoc <> ")\ESC[m\STX"
+  traceIO $ L.intercalate "\n"
+    [ color "31" "### Breakpoint Hit ###"
+    , color "37" "(" <> srcLoc <> ")"
     , printVars vars
-    , "\ESC[32m\STXPress enter to continue\ESC[m\STX"
+    , color "32" "Press enter to continue"
     ]
   _ <- blockOnInput
   pure ()
 
+runPrompt :: String -> M.Map String String -> a -> a
+runPrompt srcLoc vars x =
+  unsafePerformIO $ runPromptIO srcLoc vars >> pure x
+{-# NOINLINE runPrompt #-}
+
+runPromptM :: Applicative m => String -> M.Map String String -> m ()
+runPromptM srcLoc vars = runPrompt srcLoc vars $ pure ()
+
+runPromptIO :: MonadIO m => String -> M.Map String String -> m ()
+runPromptIO srcLoc vars = liftIO . HL.runInputTBehavior HL.defaultBehavior settings $ do
+    HL.outputStrLn . unlines $
+      [ color "31" "### Breakpoint Hit ###"
+      , color "37" $ "(" <> srcLoc <> ")"
+      ] ++ (color "36" <$> varNames)
+    inputLoop
+  where
+    varNames = M.keys vars
+    settings = HL.setComplete completion HL.defaultSettings
+    completion = HL.completeWord' Nothing isSpace $ \str ->
+      pure $ HL.simpleCompletion
+        <$> filter (str `L.isPrefixOf`) varNames
+    printVar var val = HL.outputStrLn $ color "36" (var ++ " = ") ++ val
+    inputLoop = do
+      mInp <- HL.getInputLine $ color "32" "Enter variable name: "
+      case mInp of
+        Just (L.dropWhileEnd isSpace . dropWhile isSpace -> inp)
+          | not (null inp) -> do
+              traverse_ (printVar inp) $ M.lookup inp vars
+              inputLoop
+        _ -> pure ()
+
+color :: String -> String -> String
+color c s = "\ESC[" <> c <> "m\STX" <> s <> "\ESC[m\STX"
+
 printVars :: M.Map String String -> String
 printVars vars =
-  let mkLine (k, v) = "\ESC[36m\STX" <> k <> " = \ESC[m\STX" <> v
+  let mkLine (k, v) = color "36" (k <> " = ") <> v
    in unlines $ mkLine <$> M.toList vars
+
+inactivePluginStr :: String
+inactivePluginStr =
+  "Cannot set breakpoint: the Debug.Trace plugin is not active"
 
 -- | Sets a breakpoint in pure code
 breakpoint :: a -> a
-breakpoint =
-  trace "Cannot set breakpoint: the Debug.Trace plugin is not active"
+breakpoint = trace inactivePluginStr
+
+breakpointP :: a -> a
+breakpointP = trace inactivePluginStr
 
 -- | Sets a breakpoint in an arbitrary 'Applicative'. Uses 'unsafePerformIO'
 -- which means that laziness and common sub-expression elimination can result
 -- in the breakpoint not being hit as expected. For this reason, you should
 -- prefer 'breakpointIO' if a `MonadIO` instance is available.
 breakpointM :: Applicative m => m ()
-breakpointM = traceM "Cannot set breakpoint: the Debug.Trace plugin is not active"
+breakpointM = traceM inactivePluginStr
+
+breakpointMP :: Applicative m => m ()
+breakpointMP = traceM inactivePluginStr
 
 -- | Sets a breakpoint in an 'IO' based 'Monad'. You should favor this over
 -- 'breakpointM' if the monad can perform IO.
 breakpointIO :: MonadIO m => m ()
 breakpointIO =
-  liftIO (traceIO "Cannot set breakpoint: the Debug.Trace plugin is not active")
+  liftIO (traceIO inactivePluginStr)
+
+breakpointIOP :: MonadIO m => m ()
+breakpointIOP =
+  liftIO (traceIO inactivePluginStr)
 
 -- | Pretty prints the source code location of its call site
 getSrcLoc :: String
@@ -149,12 +205,18 @@ renameAction gblEnv group = do
   captureVarsName <- Ghc.lookupOrig breakpointMod (Ghc.mkVarOcc "captureVars")
   showLevName <- Ghc.lookupOrig breakpointMod (Ghc.mkVarOcc "showLev")
   fromListName <- Ghc.lookupOrig breakpointMod (Ghc.mkVarOcc "fromAscList")
-  bpName <- Ghc.lookupOrig breakpointMod (Ghc.mkVarOcc "breakpoint")
-  bpMName <- Ghc.lookupOrig breakpointMod (Ghc.mkVarOcc "breakpointM")
-  bpIOName <- Ghc.lookupOrig breakpointMod (Ghc.mkVarOcc "breakpointIO")
+  breakpointName <- Ghc.lookupOrig breakpointMod (Ghc.mkVarOcc "breakpoint")
+  breakpointPName <- Ghc.lookupOrig breakpointMod (Ghc.mkVarOcc "breakpointP")
+  breakpointMName <- Ghc.lookupOrig breakpointMod (Ghc.mkVarOcc "breakpointM")
+  breakpointMPName <- Ghc.lookupOrig breakpointMod (Ghc.mkVarOcc "breakpointMP")
+  breakpointIOName <- Ghc.lookupOrig breakpointMod (Ghc.mkVarOcc "breakpointIO")
+  breakpointIOPName <- Ghc.lookupOrig breakpointMod (Ghc.mkVarOcc "breakpointIOP")
   printAndWaitName <- Ghc.lookupOrig breakpointMod (Ghc.mkVarOcc "printAndWait")
   printAndWaitMName <- Ghc.lookupOrig breakpointMod (Ghc.mkVarOcc "printAndWaitM")
   printAndWaitIOName <- Ghc.lookupOrig breakpointMod (Ghc.mkVarOcc "printAndWaitIO")
+  runPromptIOName <- Ghc.lookupOrig breakpointMod (Ghc.mkVarOcc "runPromptIO")
+  runPromptMName <- Ghc.lookupOrig breakpointMod (Ghc.mkVarOcc "runPromptM")
+  runPromptName <- Ghc.lookupOrig breakpointMod (Ghc.mkVarOcc "runPrompt")
   getSrcLocName <- Ghc.lookupOrig breakpointMod (Ghc.mkVarOcc "getSrcLoc")
 
   let (group', _) =
@@ -233,21 +295,48 @@ hsVarCase (Ghc.HsVar _ (Ghc.L loc name)) = do
           (Ghc.nlHsApp (Ghc.nlHsVar printAndWaitIOName) srcLocStringExpr)
           captureVarsExpr
 
+      bpIOPExpr =
+        Ghc.nlHsApp
+          (Ghc.nlHsApp (Ghc.nlHsVar runPromptIOName) srcLocStringExpr)
+          captureVarsExpr
+
+      bpPExpr =
+        Ghc.nlHsApp
+          (Ghc.nlHsApp (Ghc.nlHsVar runPromptName) srcLocStringExpr)
+          captureVarsExpr
+
+      bpMPExpr =
+        Ghc.nlHsApp
+          (Ghc.nlHsApp (Ghc.nlHsVar runPromptMName) srcLocStringExpr)
+          captureVarsExpr
+
   if | captureVarsName == name -> do
          tell $ Any True
          pure (Just $ Ghc.unLoc captureVarsExpr)
 
-     | bpName == name -> do
+     | breakpointName == name -> do
          tell $ Any True
          pure (Just $ Ghc.unLoc bpExpr)
 
-     | bpMName == name -> do
+     | breakpointMName == name -> do
          tell $ Any True
          pure (Just $ Ghc.unLoc bpMExpr)
 
-     | bpIOName == name -> do
+     | breakpointIOName == name -> do
          tell $ Any True
          pure (Just $ Ghc.unLoc bpIOExpr)
+
+     | breakpointIOPName == name -> do
+         tell $ Any True
+         pure (Just $ Ghc.unLoc bpIOPExpr)
+
+     | breakpointPName == name -> do
+         tell $ Any True
+         pure (Just $ Ghc.unLoc bpPExpr)
+
+     | breakpointMPName == name -> do
+         tell $ Any True
+         pure (Just $ Ghc.unLoc bpMPExpr)
 
      | getSrcLocName == name ->
          pure (Just $ Ghc.unLoc srcLocStringExpr)
@@ -521,12 +610,18 @@ data Env = MkEnv
   , captureVarsName :: !Ghc.Name
   , showLevName :: !Ghc.Name
   , fromListName :: !Ghc.Name
-  , bpName :: !Ghc.Name
-  , bpMName :: !Ghc.Name
-  , bpIOName :: !Ghc.Name
+  , breakpointName :: !Ghc.Name
+  , breakpointPName :: !Ghc.Name
+  , breakpointMName :: !Ghc.Name
+  , breakpointMPName :: !Ghc.Name
+  , breakpointIOName :: !Ghc.Name
+  , breakpointIOPName :: !Ghc.Name
   , printAndWaitName :: !Ghc.Name
   , printAndWaitMName :: !Ghc.Name
   , printAndWaitIOName :: !Ghc.Name
+  , runPromptIOName :: !Ghc.Name
+  , runPromptName :: !Ghc.Name
+  , runPromptMName :: !Ghc.Name
   , getSrcLocName :: !Ghc.Name
   }
 
