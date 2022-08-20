@@ -5,11 +5,12 @@ debugging tool. While GHCi has built-in support for setting breakpoints, it
 suffers from several critical limitations:
 - It's prohibitively buggy when used with concurrent programs, such as web servers.
 - Breakpoints can only be set in interpreted code.
+- Occasionally it simply doesn't work at all.
 
 The `breakpoint` library solves these problems by implementing breakpoints as
 a GHC plugin.
 
-### Quick start guide
+### Usage
 
 Add `breakpoint` as a dependency to your project then enable breakpoints in a
 given module by adding `{-# OPTIONS_GHC -fplugin Debug.Breakpoint #-}` to the
@@ -65,6 +66,18 @@ within angle brackets.
 Execution of the program effectively halts on waiting for user input. In
 concurrent programs, all threads will be stopped, not just the one executing
 the breakpoint (GHC >= 9.2.x only).
+
+### Querying variables
+
+Aside from the standard breakpoint functionality, which prints out the values
+for all variables, you can also use the `queryVars`, `queryVarsM`, and
+`queryVarsIO` functions to initiate a prompt where you can enter specific
+variables names to have their value printed. This is useful if you are only
+interested in specific values or if the printing of one or more values would
+result in a non-terminating process (an infinite data structure for example).
+You can tab-complete variable names at this prompt. Only the current thread is
+blocked while the prompt is active. To resume execution, press enter with a
+blank prompt.
 
 ### Caveats
 - Currently only supports GHC version 8.10.x, 9.0.x, and 9.2.x

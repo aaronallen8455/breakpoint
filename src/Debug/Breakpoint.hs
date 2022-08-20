@@ -26,11 +26,11 @@ module Debug.Breakpoint
   , runPromptM
   , runPromptIO
   , breakpoint
-  , breakpointP
+  , queryVars
   , breakpointM
-  , breakpointMP
+  , queryVarsM
   , breakpointIO
-  , breakpointIOP
+  , queryVarsIO
   , getSrcLoc
   ) where
 
@@ -146,8 +146,27 @@ inactivePluginStr =
 breakpoint :: a -> a
 breakpoint = trace inactivePluginStr
 
-breakpointP :: a -> a
-breakpointP = trace inactivePluginStr
+-- | When evaluated, displays the names of variables visible from the callsite
+-- and starts a prompt where entering a variable will display its value. You
+-- may want to use this instead of 'breakpoint' if there are value which should
+-- stay unevaluated or you are only interested in certain values. Only the
+-- current thread is blocked while the prompt is active. To resume execution,
+-- press enter with a blank prompt.
+queryVars :: a -> a
+queryVars = trace inactivePluginStr
+
+-- | Similar to 'queryVars' but for use in an arbitrary 'Applicative' context.
+-- This uses 'unsafePerformIO' which means that laziness and common sub-expression
+-- elimination can result in unexpected behavior. For this reason you should
+-- prefer 'queryVarsIO' if a 'MonadIO' instance is available.
+queryVarsM :: Applicative m => m ()
+queryVarsM = traceM inactivePluginStr
+
+-- | Similar to 'queryVars' but specialized to an 'IO' context. You should favor
+-- this over 'queryVarsM' if a 'MonadIO' instance is available.
+queryVarsIO :: MonadIO m => m ()
+queryVarsIO =
+  liftIO (traceIO inactivePluginStr)
 
 -- | Sets a breakpoint in an arbitrary 'Applicative'. Uses 'unsafePerformIO'
 -- which means that laziness and common sub-expression elimination can result
@@ -156,17 +175,10 @@ breakpointP = trace inactivePluginStr
 breakpointM :: Applicative m => m ()
 breakpointM = traceM inactivePluginStr
 
-breakpointMP :: Applicative m => m ()
-breakpointMP = traceM inactivePluginStr
-
 -- | Sets a breakpoint in an 'IO' based 'Monad'. You should favor this over
 -- 'breakpointM' if the monad can perform IO.
 breakpointIO :: MonadIO m => m ()
 breakpointIO =
-  liftIO (traceIO inactivePluginStr)
-
-breakpointIOP :: MonadIO m => m ()
-breakpointIOP =
   liftIO (traceIO inactivePluginStr)
 
 -- | Pretty prints the source code location of its call site
@@ -206,11 +218,11 @@ renameAction gblEnv group = do
   showLevName <- Ghc.lookupOrig breakpointMod (Ghc.mkVarOcc "showLev")
   fromListName <- Ghc.lookupOrig breakpointMod (Ghc.mkVarOcc "fromAscList")
   breakpointName <- Ghc.lookupOrig breakpointMod (Ghc.mkVarOcc "breakpoint")
-  breakpointPName <- Ghc.lookupOrig breakpointMod (Ghc.mkVarOcc "breakpointP")
+  queryVarsName <- Ghc.lookupOrig breakpointMod (Ghc.mkVarOcc "queryVars")
   breakpointMName <- Ghc.lookupOrig breakpointMod (Ghc.mkVarOcc "breakpointM")
-  breakpointMPName <- Ghc.lookupOrig breakpointMod (Ghc.mkVarOcc "breakpointMP")
+  queryVarsMName <- Ghc.lookupOrig breakpointMod (Ghc.mkVarOcc "queryVarsM")
   breakpointIOName <- Ghc.lookupOrig breakpointMod (Ghc.mkVarOcc "breakpointIO")
-  breakpointIOPName <- Ghc.lookupOrig breakpointMod (Ghc.mkVarOcc "breakpointIOP")
+  queryVarsIOName <- Ghc.lookupOrig breakpointMod (Ghc.mkVarOcc "queryVarsIO")
   printAndWaitName <- Ghc.lookupOrig breakpointMod (Ghc.mkVarOcc "printAndWait")
   printAndWaitMName <- Ghc.lookupOrig breakpointMod (Ghc.mkVarOcc "printAndWaitM")
   printAndWaitIOName <- Ghc.lookupOrig breakpointMod (Ghc.mkVarOcc "printAndWaitIO")
@@ -295,17 +307,17 @@ hsVarCase (Ghc.HsVar _ (Ghc.L loc name)) = do
           (Ghc.nlHsApp (Ghc.nlHsVar printAndWaitIOName) srcLocStringExpr)
           captureVarsExpr
 
-      bpIOPExpr =
+      queryVarsIOExpr =
         Ghc.nlHsApp
           (Ghc.nlHsApp (Ghc.nlHsVar runPromptIOName) srcLocStringExpr)
           captureVarsExpr
 
-      bpPExpr =
+      queryVarsExpr =
         Ghc.nlHsApp
           (Ghc.nlHsApp (Ghc.nlHsVar runPromptName) srcLocStringExpr)
           captureVarsExpr
 
-      bpMPExpr =
+      queryVarsMExpr =
         Ghc.nlHsApp
           (Ghc.nlHsApp (Ghc.nlHsVar runPromptMName) srcLocStringExpr)
           captureVarsExpr
@@ -326,17 +338,17 @@ hsVarCase (Ghc.HsVar _ (Ghc.L loc name)) = do
          tell $ Any True
          pure (Just $ Ghc.unLoc bpIOExpr)
 
-     | breakpointIOPName == name -> do
+     | queryVarsIOName == name -> do
          tell $ Any True
-         pure (Just $ Ghc.unLoc bpIOPExpr)
+         pure (Just $ Ghc.unLoc queryVarsIOExpr)
 
-     | breakpointPName == name -> do
+     | queryVarsName == name -> do
          tell $ Any True
-         pure (Just $ Ghc.unLoc bpPExpr)
+         pure (Just $ Ghc.unLoc queryVarsExpr)
 
-     | breakpointMPName == name -> do
+     | queryVarsMName == name -> do
          tell $ Any True
-         pure (Just $ Ghc.unLoc bpMPExpr)
+         pure (Just $ Ghc.unLoc queryVarsMExpr)
 
      | getSrcLocName == name ->
          pure (Just $ Ghc.unLoc srcLocStringExpr)
@@ -611,11 +623,11 @@ data Env = MkEnv
   , showLevName :: !Ghc.Name
   , fromListName :: !Ghc.Name
   , breakpointName :: !Ghc.Name
-  , breakpointPName :: !Ghc.Name
+  , queryVarsName :: !Ghc.Name
   , breakpointMName :: !Ghc.Name
-  , breakpointMPName :: !Ghc.Name
+  , queryVarsMName :: !Ghc.Name
   , breakpointIOName :: !Ghc.Name
-  , breakpointIOPName :: !Ghc.Name
+  , queryVarsIOName :: !Ghc.Name
   , printAndWaitName :: !Ghc.Name
   , printAndWaitMName :: !Ghc.Name
   , printAndWaitIOName :: !Ghc.Name

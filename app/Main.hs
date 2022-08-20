@@ -20,7 +20,23 @@ test = do
       x = "one"
       y = 2 :: Int
       zzzz = id :: Bool -> Bool
-  breakpointIOP
-  x <- getLine
-  breakpointIOP
-  pure ()
+--   breakpointIOP
+--   x <- getLine
+--   breakpointIOP
+--   pure ()
+
+  forkOS $ do
+    forkOS $ do
+      threadDelay 3000000
+      print 3
+      breakpointIO
+    threadDelay 5000000
+    print 2
+    breakpointIO
+  forkOS $ do
+    threadDelay 1000
+    breakpointIO
+  forever $ do
+    threadDelay 1000000
+    print 1
+

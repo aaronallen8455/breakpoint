@@ -56,7 +56,7 @@ executable test
         base >=4.14.0.0 && <4.17.0.0,
         breakpoint,
         containers
-    ghc-options: -threaded +RTS -N -RTS
+    ghc-options: -threaded -with-rtsopts=-N -with-rtsopts=-s
 
     hs-source-dirs:   app
     default-language: Haskell2010
