@@ -1,8 +1,8 @@
 # Breakpoint
 
-The ability to set breakpoints in a program can be an extremely valuable
-debugging tool. While GHCi has built-in support for setting breakpoints, it
-suffers from several critical limitations:
+The ability to set breakpoints in a program can provide valuable insights when
+debugging. While GHCi has built-in support for setting breakpoints, it is not
+actively maintained and suffers from several critical limitations:
 - It's prohibitively buggy when used with concurrent programs, such as web servers.
 - Breakpoints can only be set in interpreted code.
 - Occasionally it simply doesn't work at all.
@@ -13,8 +13,8 @@ a GHC plugin.
 ### Usage
 
 Add `breakpoint` as a dependency to your project then enable breakpoints in a
-given module by adding `{-# OPTIONS_GHC -fplugin Debug.Breakpoint #-}` to the
-top of the file. Then import the `Debug.Breakpoint` module and use the
+module by adding `{-# OPTIONS_GHC -fplugin Debug.Breakpoint #-}` to the top of
+the file and importing the `Debug.Breakpoint` module. You can then use the
 `breakpoint`, `breakpointIO`, or `breakpointM` functions as appropriate to set
 a breakpoint.
 
@@ -69,15 +69,18 @@ the breakpoint (GHC >= 9.2.x only).
 
 ### Querying variables
 
-Aside from the standard breakpoint functionality, which prints out the values
-for all variables, you can also use the `queryVars`, `queryVarsM`, and
-`queryVarsIO` functions to initiate a prompt where you can enter specific
-variables names to have their value printed. This is useful if you are only
-interested in specific values or if the printing of one or more values would
-result in a non-terminating process (an infinite data structure for example).
-You can tab-complete variable names at this prompt. Only the current thread is
-blocked while the prompt is active. To resume execution, press enter with a
-blank prompt.
+In contrast to the standard breakpoint functions which print out the values for
+all current variables, the `queryVars`, `queryVarsM`, and `queryVarsIO`
+functions first print the variables names and then initiate a prompt where you
+can enter a specific variable name to have its value printed.
+
+This is useful if you are only interested in certain values or if printing one
+or more values would result in a non-terminating process (an infinite data
+structure for example).
+
+You can tab-complete variable names at the query prompt. Only the current
+thread is blocked while the prompt is active. To resume execution, press enter
+with a blank line.
 
 ### Caveats
 - Currently only supports GHC version 8.10.x, 9.0.x, and 9.2.x

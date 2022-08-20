@@ -6,7 +6,7 @@ synopsis:
 
 description:
   A plugin that allows you to set breakpoints for debugging purposes.
-  .
+
   See the [README](https://github.com/aaronallen8455/breakpoint#breakpoint) for details.
 
 -- A URL where users can report bugs.
@@ -37,29 +37,11 @@ library
                       containers,
                       mtl,
                       transformers,
-                      dlist,
                       haskeline
     hs-source-dirs:   src
     default-language: Haskell2010
     ghc-options: -Wall
                  -Wno-unticked-promoted-constructors
-
-executable test
-    main-is:          Main.hs
-
-    -- Modules included in this executable, other than Main.
-    -- other-modules:
-
-    -- LANGUAGE extensions used by modules in this package.
-    -- other-extensions:
-    build-depends:
-        base >=4.14.0.0 && <4.17.0.0,
-        breakpoint,
-        containers
-    ghc-options: -threaded -with-rtsopts=-N -with-rtsopts=-s
-
-    hs-source-dirs:   app
-    default-language: Haskell2010
 
 test-suite spec
   main-is: Spec.hs
