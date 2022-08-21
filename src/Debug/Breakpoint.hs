@@ -15,7 +15,16 @@
 {-# LANGUAGE FlexibleContexts #-}
 {-# LANGUAGE GADTs #-}
 module Debug.Breakpoint
-  ( plugin
+  ( -- * Plugin
+    plugin
+    -- * API
+  , breakpoint
+  , breakpointM
+  , breakpointIO
+  , queryVars
+  , queryVarsM
+  , queryVarsIO
+    -- * Internals
   , captureVars
   , showLev
   , fromAscList
@@ -25,12 +34,6 @@ module Debug.Breakpoint
   , runPrompt
   , runPromptM
   , runPromptIO
-  , breakpoint
-  , queryVars
-  , breakpointM
-  , queryVarsM
-  , breakpointIO
-  , queryVarsIO
   , getSrcLoc
   ) where
 
