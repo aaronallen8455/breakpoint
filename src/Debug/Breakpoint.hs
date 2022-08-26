@@ -53,6 +53,7 @@ import qualified Data.List as L
 import qualified Data.Map.Lazy as M
 import           Data.Maybe
 import           Data.Monoid (Any(..))
+import qualified Data.Text.Lazy as T
 import           Data.Traversable (for)
 import           Debug.Trace (trace, traceIO, traceM)
 import qualified GHC.Exts as Exts
@@ -65,6 +66,8 @@ import qualified TcPluginM as Plugin
 import           GHC.Word
 import qualified System.Console.Haskeline as HL
 import           System.IO.Unsafe (unsafePerformIO)
+import qualified Text.Pretty.Simple as PS
+import qualified Text.Pretty.Simple.Internal.Color as PS
 
 import qualified Debug.Breakpoint.GhcFacade as Ghc
 
@@ -123,7 +126,7 @@ runPromptIO srcLoc vars = liftIO . HL.runInputTBehavior HL.defaultBehavior setti
     completion = HL.completeWord' Nothing isSpace $ \str ->
       pure $ HL.simpleCompletion
         <$> filter (str `L.isPrefixOf`) varNames
-    printVar var val = HL.outputStrLn $ color "36" (var ++ " = ") ++ val
+    printVar var val = HL.outputStrLn $ color "36" (var ++ " = ") ++ prettify val
     inputLoop = do
       mInp <- HL.getInputLine $ color "32" "Enter variable name: "
       case mInp of
@@ -138,8 +141,23 @@ color c s = "\ESC[" <> c <> "m\STX" <> s <> "\ESC[m\STX"
 
 printVars :: M.Map String String -> String
 printVars vars =
-  let mkLine (k, v) = color "36" (k <> " = ") <> v
-   in unlines $ mkLine <$> M.toList vars
+  let mkLine (k, v) = color "36" (k <> " = \n") <> prettify v
+   in unlines . L.intersperse "" $ mkLine <$> M.toList vars
+
+prettify :: String -> String
+prettify = T.unpack
+         . PS.pStringOpt
+             PS.defaultOutputOptionsDarkBg
+               { PS.outputOptionsInitialIndent = 2
+               , PS.outputOptionsIndentAmount = 2
+               , PS.outputOptionsColorOptions = Just PS.ColorOptions
+                 { PS.colorQuote = PS.colorNull
+                 , PS.colorString = PS.colorBold PS.Vivid PS.Blue
+                 , PS.colorError = PS.colorBold PS.Vivid PS.Red
+                 , PS.colorNum = PS.colorBold PS.Vivid PS.Green
+                 , PS.colorRainbowParens = [PS.colorBold PS.Vivid PS.Cyan]
+                 }
+               }
 
 inactivePluginStr :: String
 inactivePluginStr =
@@ -762,7 +780,7 @@ buildDict names cls tys = do
           let (inst, _) = fromRight (error "impossible: no Show instance for ShowWrapper") $
                 Ghc.lookupUniqueInstEnv
                   instEnvs
-                  cls
+                  (showClass names)
                   [Ghc.mkTyConApp (showWrapperTyCon names) [ty]]
               liftedDict =
                 liftDict inst ty (getEvExprFromDict unshowableDict)
