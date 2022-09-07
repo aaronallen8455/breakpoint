@@ -213,9 +213,8 @@ renameAction
   -> Ghc.HsGroup Ghc.GhcRn
   -> Ghc.TcM (Ghc.TcGblEnv, Ghc.HsGroup Ghc.GhcRn)
 renameAction gblEnv group = do
-  hscEnv <- Ghc.getTopEnv
-  Ghc.Found _ breakpointMod <- liftIO $
-    Ghc.findPluginModule hscEnv (Ghc.mkModuleName "Debug.Breakpoint")
+  Ghc.Found _ breakpointMod <-
+    Ghc.findPluginModule' (Ghc.mkModuleName "Debug.Breakpoint")
 
   captureVarsName <- Ghc.lookupOrig breakpointMod (Ghc.mkVarOcc "captureVars")
   showLevName <- Ghc.lookupOrig breakpointMod (Ghc.mkVarOcc "showLev")
@@ -458,7 +457,9 @@ dealWithBind resultNames lbind = for lbind $ \case
           | otherwise = psb_ext
     pure $ Ghc.PatSynBind x Ghc.PSB { psb_def = defRes, psb_ext = rhsVars, .. }
 
+#if !MIN_VERSION_ghc(9,4,0)
   other -> pure other
+#endif
 
 grhsCase :: Ghc.GRHS Ghc.GhcRn (Ghc.LHsExpr Ghc.GhcRn)
          -> EnvReader (Maybe (Ghc.GRHS Ghc.GhcRn (Ghc.LHsExpr Ghc.GhcRn)))
@@ -477,12 +478,12 @@ grhsCase _ = pure Nothing
 -- TODO could combine with hsVar case to allow for "quick failure"
 hsLetCase :: Ghc.HsExpr Ghc.GhcRn
           -> EnvReader (Maybe (Ghc.HsExpr Ghc.GhcRn))
-hsLetCase (Ghc.HsLet' x (Ghc.L loc localBinds) inExpr) = do
+hsLetCase (Ghc.HsLet' x letToken (Ghc.L loc localBinds) inToken inExpr) = do
   (bindsRes, names) <- dealWithLocalBinds localBinds
 
   inExprRes <- addScopedVars names $ recurse inExpr
   pure . Just $
-    Ghc.HsLet' x (Ghc.L loc bindsRes) inExprRes
+    Ghc.HsLet' x letToken (Ghc.L loc bindsRes) inToken inExprRes
 hsLetCase _ = pure Nothing
 
 dealWithLocalBinds
@@ -688,14 +689,17 @@ tcPlugin = Ghc.TcPlugin
   { Ghc.tcPluginInit  = initTcPlugin
   , Ghc.tcPluginSolve = solver
   , Ghc.tcPluginStop = const $ pure ()
+#if MIN_VERSION_ghc(9,4,0)
+  , Ghc.tcPluginRewrite = mempty
+#endif
   }
 
 initTcPlugin :: Ghc.TcPluginM TcPluginNames
 initTcPlugin = do
   Ghc.Found _ breakpointMod <-
-    Plugin.findImportedModule (Ghc.mkModuleName "Debug.Breakpoint") Nothing
+    Ghc.findImportedModule' (Ghc.mkModuleName "Debug.Breakpoint")
   Ghc.Found _ showMod <-
-    Plugin.findImportedModule (Ghc.mkModuleName "GHC.Show") (Just $ Ghc.fsLit "base")
+    Ghc.findImportedModule' (Ghc.mkModuleName "GHC.Show")
 
   showLevClassName <- Plugin.lookupOrig breakpointMod (Ghc.mkClsOcc "ShowLev")
   showClass <- Plugin.tcLookupClass =<< Plugin.lookupOrig showMod (Ghc.mkClsOcc "Show")
@@ -796,7 +800,7 @@ instantiateVars tyVarMap tys = replace <$> tys
 
 buildUnshowableDict :: Ghc.Type -> Ghc.TcM Ghc.EvTerm
 buildUnshowableDict ty = do
-  let tyString = Ghc.showSDocUnsafe $ Ghc.pprTypeForUser ty
+  let tyString = Ghc.showSDocUnsafe $ Ghc.pprTypeForUser' ty
   str <- Ghc.mkStringExpr $ "<" <> tyString <> ">"
   pure . Ghc.EvExpr $
     Ghc.mkCoreLams [Ghc.mkWildValBinder' ty] str

@@ -1,3 +1,4 @@
+{-# LANGUAGE DataKinds #-}
 {-# LANGUAGE ViewPatterns #-}
 {-# LANGUAGE PatternSynonyms #-}
 {-# LANGUAGE CPP #-}
@@ -12,17 +13,58 @@ module Debug.Breakpoint.GhcFacade
   , noLocA'
   , locA'
   , mkWildValBinder'
+  , pprTypeForUser'
+  , findImportedModule'
+  , findPluginModule'
   , pattern HsLet'
   , pattern LetStmt'
   , pattern ExplicitList'
   , pattern BindStmt'
   ) where
 
-#if MIN_VERSION_ghc(9,2,0)
+#if MIN_VERSION_ghc(9,4,0)
+import           GHC.Driver.Plugins as Ghc hiding (TcPlugin)
+import           GHC.Hs.Extension as Ghc
+import           Language.Haskell.Syntax as Ghc
+import           GHC.Tc.Types as Ghc hiding (DefaultingPlugin)
+import qualified GHC.Tc.Plugin as Plugin
+import           GHC.Parser.Annotation as Ghc
+import           GHC.Types.SrcLoc as Ghc
+import           GHC.Types.Name as Ghc
+import           GHC.Iface.Env as Ghc
+import           GHC.Unit.Finder as Ghc
+import           GHC.Unit.Module.Name as Ghc
+import           GHC.Tc.Utils.Monad as Ghc hiding (TcPlugin, DefaultingPlugin)
+import           GHC.Data.FastString as Ghc
+import           GHC.Hs.Utils as Ghc
+import           GHC.Types.Unique.Set as Ghc
+import           GHC.Utils.Outputable as Ghc
+import           GHC.Hs.Binds as Ghc
+import           GHC.Rename.Bind as Ghc
+import           GHC.Data.Bag as Ghc
+import           GHC.Types.Basic as Ghc
+import           GHC.Types.Name.Env as Ghc
+import           GHC.Builtin.Types as Ghc
+import           GHC.Core.TyCo.Rep as Ghc
+import           GHC.Tc.Types.Constraint as Ghc
+import           GHC.Core.Make as Ghc
+import           GHC.Tc.Types.Evidence as Ghc
+import           GHC.Types.Id as Ghc
+import           GHC.Core.InstEnv as Ghc
+import           GHC.Core.Class as Ghc hiding (FunDep)
+import           GHC.Tc.Utils.TcType as Ghc
+import           GHC.Core.Type as Ghc
+import           GHC.Core.TyCon as Ghc
+import           GHC.Types.TyThing.Ppr as Ghc
+import           GHC.Hs.Expr as Ghc
+import           GHC.Types.PkgQual as Ghc
+
+#elif MIN_VERSION_ghc(9,2,0)
 import           GHC.Driver.Plugins as Ghc hiding (TcPlugin)
 import           GHC.Hs.Extension as Ghc
 import           Language.Haskell.Syntax as Ghc
 import           GHC.Tc.Types as Ghc
+import qualified GHC.Tc.Plugin as Plugin
 import           GHC.Parser.Annotation as Ghc
 import           GHC.Types.SrcLoc as Ghc
 import           GHC.Types.Name as Ghc
@@ -58,6 +100,7 @@ import           GHC.Driver.Plugins as Ghc hiding (TcPlugin)
 import           GHC.Driver.Finder as Ghc
 import           GHC.Hs.Extension as Ghc
 import           GHC.Tc.Types as Ghc
+import qualified GHC.Tc.Plugin as Plugin
 import           GHC.Parser.Annotation as Ghc
 import           GHC.Types.SrcLoc as Ghc
 import           GHC.Types.Name as Ghc
@@ -125,6 +168,7 @@ import           TcPluginM as Ghc hiding (lookupOrig, getTopEnv, getEnvs, newUni
 import           GHC.Hs.Decls as Ghc
 import           TcRnMonad as Ghc
 import           Plugins as Ghc hiding (TcPlugin)
+import qualified TcPluginM as Plugin
 #endif
 
 liftedRepName :: Ghc.Name
@@ -188,18 +232,63 @@ mkWildValBinder' = Ghc.mkWildValBinder Ghc.oneDataConTy
 mkWildValBinder' = Ghc.mkWildValBinder
 #endif
 
+pprTypeForUser' :: Ghc.Type -> Ghc.SDoc
+#if MIN_VERSION_ghc(9,4,0)
+pprTypeForUser' = Ghc.pprSigmaType
+#else
+pprTypeForUser' = Ghc.pprTypeForUser
+#endif
+
+findImportedModule' :: Ghc.ModuleName -> Ghc.TcPluginM Ghc.FindResult
+#if MIN_VERSION_ghc(9,4,0)
+findImportedModule' modName = Plugin.findImportedModule modName Ghc.NoPkgQual
+#else
+findImportedModule' modName = Plugin.findImportedModule modName Nothing
+#endif
+
+findPluginModule' :: Ghc.ModuleName -> Ghc.TcM Ghc.FindResult
+#if MIN_VERSION_ghc(9,4,0)
+findPluginModule' modName =
+  Ghc.runTcPluginM $ Plugin.findImportedModule modName Ghc.NoPkgQual
+#else
+findPluginModule' modName = do
+  hscEnv <- Ghc.getTopEnv
+  liftIO $ Ghc.findPluginModule hscEnv modName
+#endif
+
+#if MIN_VERSION_ghc(9,4,0)
+type LetToken =
+  Ghc.LHsToken "let" Ghc.GhcRn
+type InToken =
+  Ghc.LHsToken "in" Ghc.GhcRn
+#else
+type LetToken = ()
+type InToken = ()
+#endif
+
 pattern HsLet'
   :: Ghc.XLet Ghc.GhcRn
+  -> LetToken
   -> Ghc.Located (Ghc.HsLocalBinds Ghc.GhcRn)
+  -> InToken
   -> Ghc.LHsExpr Ghc.GhcRn
   -> Ghc.HsExpr Ghc.GhcRn
-#if MIN_VERSION_ghc(9,2,0)
-pattern HsLet' x lbinds expr <-
-  Ghc.HsLet x (Ghc.L Ghc.noSrcSpan -> lbinds) expr
+#if MIN_VERSION_ghc(9,4,0)
+pattern HsLet' x letToken lbinds inToken expr <-
+  Ghc.HsLet x letToken (Ghc.L Ghc.noSrcSpan -> lbinds) inToken expr
   where
-    HsLet' x (Ghc.L _ binds) expr = Ghc.HsLet x binds expr
+    HsLet' x letToken (Ghc.L _ binds) inToken expr =
+      Ghc.HsLet x letToken binds inToken expr
+#elif MIN_VERSION_ghc(9,2,0)
+pattern HsLet' x letToken lbinds inToken expr <-
+  Ghc.HsLet (pure . pure -> (letToken, (inToken, x))) (Ghc.L Ghc.noSrcSpan -> lbinds) expr
+  where
+    HsLet' x () (Ghc.L _ binds) () expr = Ghc.HsLet x binds expr
 #else
-pattern HsLet' x lbinds expr = Ghc.HsLet x lbinds expr
+pattern HsLet' x letToken lbinds inToken expr <-
+  Ghc.HsLet (pure . pure -> (letToken, (inToken, x))) lbinds expr
+  where
+    HsLet' x _ lbinds _ expr = Ghc.HsLet x lbinds expr
 #endif
 
 pattern LetStmt'
