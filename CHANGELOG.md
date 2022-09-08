@@ -4,6 +4,7 @@
 
 * Support for GHC 9.4.*
 * Values are pretty printed using `pretty-simple`
+* Timeouts are suspended during breakpoints for GHC >= 9.2
 
 ## 0.1.0.0 -- YYYY-mm-dd
 

@@ -1,4 +1,3 @@
-{-# LANGUAGE ForeignFunctionInterface #-}
 {-# LANGUAGE CPP #-}
 {-# LANGUAGE ViewPatterns #-}
 {-# LANGUAGE DataKinds #-}
@@ -70,6 +69,7 @@ import qualified Text.Pretty.Simple as PS
 import qualified Text.Pretty.Simple.Internal.Color as PS
 
 import qualified Debug.Breakpoint.GhcFacade as Ghc
+import qualified Debug.Breakpoint.TimerManager as TM
 
 --------------------------------------------------------------------------------
 -- API
@@ -96,14 +96,14 @@ printAndWaitM srcLoc vars = printAndWait srcLoc vars $ pure ()
 
 printAndWaitIO :: MonadIO m => String -> M.Map String String -> m ()
 printAndWaitIO srcLoc vars = liftIO $ do
-  traceIO $ L.intercalate "\n"
-    [ color "31" "### Breakpoint Hit ###"
-    , color "37" "(" <> srcLoc <> ")"
-    , printVars vars
-    , color "32" "Press enter to continue"
-    ]
-  _ <- blockOnInput
-  pure ()
+  TM.suspendTimeouts $ do
+    traceIO $ L.intercalate "\n"
+      [ color red "### Breakpoint Hit ###"
+      , color grey "(" <> srcLoc <> ")"
+      , printVars vars
+      , color green "Press enter to continue"
+      ]
+    void blockOnInput
 
 runPrompt :: String -> M.Map String String -> a -> a
 runPrompt srcLoc vars x =
@@ -116,9 +116,9 @@ runPromptM srcLoc vars = runPrompt srcLoc vars $ pure ()
 runPromptIO :: MonadIO m => String -> M.Map String String -> m ()
 runPromptIO srcLoc vars = liftIO . HL.runInputTBehavior HL.defaultBehavior settings $ do
     HL.outputStrLn . unlines $
-      [ color "31" "### Breakpoint Hit ###"
-      , color "37" $ "(" <> srcLoc <> ")"
-      ] ++ (color "36" <$> varNames)
+      [ color red "### Breakpoint Hit ###"
+      , color grey $ "(" <> srcLoc <> ")"
+      ] ++ (color cyan <$> varNames)
     inputLoop
   where
     varNames = M.keys vars
@@ -126,9 +126,9 @@ runPromptIO srcLoc vars = liftIO . HL.runInputTBehavior HL.defaultBehavior setti
     completion = HL.completeWord' Nothing isSpace $ \str ->
       pure $ HL.simpleCompletion
         <$> filter (str `L.isPrefixOf`) varNames
-    printVar var val = HL.outputStrLn $ color "36" (var ++ " =\n") ++ prettify val
+    printVar var val = HL.outputStrLn $ color cyan (var ++ " =\n") ++ prettify val
     inputLoop = do
-      mInp <- HL.getInputLine $ color "32" "Enter variable name: "
+      mInp <- HL.getInputLine $ color green "Enter variable name: "
       case mInp of
         Just (L.dropWhileEnd isSpace . dropWhile isSpace -> inp)
           | not (null inp) -> do
@@ -139,9 +139,15 @@ runPromptIO srcLoc vars = liftIO . HL.runInputTBehavior HL.defaultBehavior setti
 color :: String -> String -> String
 color c s = "\ESC[" <> c <> "m\STX" <> s <> "\ESC[m\STX"
 
+red, green, grey, cyan :: String
+red = "31"
+green = "32"
+grey = "37"
+cyan = "36"
+
 printVars :: M.Map String String -> String
 printVars vars =
-  let mkLine (k, v) = color "36" (k <> " =\n") <> prettify v
+  let mkLine (k, v) = color cyan (k <> " =\n") <> prettify v
    in unlines . L.intersperse "" $ mkLine <$> M.toList vars
 
 prettify :: String -> String
@@ -848,6 +854,11 @@ instance ShowLev 'Exts.Int32Rep Exts.Int32# where
   showLev i = show $ I32# i
 #endif
 
+#if MIN_VERSION_base(4,17,0)
+instance ShowLev 'Exts.Int64Rep Exts.Int64# where
+  showLev i = show $ I64# i
+#endif
+
 instance ShowLev 'Exts.WordRep Exts.Word# where
   showLev w = show $ W# w
 
@@ -860,6 +871,11 @@ instance ShowLev 'Exts.Word16Rep Exts.Word16# where
 
 instance ShowLev 'Exts.Word32Rep Exts.Word32# where
   showLev w = show $ W32# w
+#endif
+
+#if MIN_VERSION_base(4,17,0)
+instance ShowLev 'Exts.Word64Rep Exts.Word64# where
+  showLev w = show $ W64# w
 #endif
 
 instance ShowLev 'Exts.FloatRep Exts.Float# where
