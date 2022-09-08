@@ -1,4 +1,3 @@
-{-# LANGUAGE ForeignFunctionInterface #-}
 {-# LANGUAGE CPP #-}
 {-# LANGUAGE ViewPatterns #-}
 {-# LANGUAGE DataKinds #-}
@@ -56,6 +55,9 @@ import           Data.Monoid (Any(..))
 import qualified Data.Text.Lazy as T
 import           Data.Traversable (for)
 import           Debug.Trace (trace, traceIO, traceM)
+#if MIN_VERSION_ghc(9,2,0)
+import qualified GHC.Clock as Clock
+#endif
 import qualified GHC.Exts as Exts
 import           GHC.Int
 #if MIN_VERSION_ghc(9,0,0)
@@ -70,6 +72,9 @@ import qualified Text.Pretty.Simple as PS
 import qualified Text.Pretty.Simple.Internal.Color as PS
 
 import qualified Debug.Breakpoint.GhcFacade as Ghc
+#if MIN_VERSION_ghc(9,2,0)
+import qualified Debug.Breakpoint.TimerManager as TM
+#endif
 
 --------------------------------------------------------------------------------
 -- API
@@ -96,13 +101,29 @@ printAndWaitM srcLoc vars = printAndWait srcLoc vars $ pure ()
 
 printAndWaitIO :: MonadIO m => String -> M.Map String String -> m ()
 printAndWaitIO srcLoc vars = liftIO $ do
+#if MIN_VERSION_ghc(9,2,0)
+  let tenDays = 1000 * 1000000 * 60 * 60 * 24 * 10
+  -- Add a large length of time to all timeouts so that they don't immediately
+  -- expire when blocking ends
+  TM.modifyTimeouts (+ tenDays)
+  before <- Clock.getMonotonicTimeNSec
+#endif
   traceIO $ L.intercalate "\n"
-    [ color "31" "### Breakpoint Hit ###"
-    , color "37" "(" <> srcLoc <> ")"
+    [ color red "### Breakpoint Hit ###"
+    , color grey "(" <> srcLoc <> ")"
     , printVars vars
-    , color "32" "Press enter to continue"
+    , color green "Press enter to continue"
     ]
   _ <- blockOnInput
+#if MIN_VERSION_ghc(9,2,0)
+  after <- Clock.getMonotonicTimeNSec
+  let elapsed = after - before
+  -- Set timeouts back to where they were plus the length of time spent blocking
+  TM.modifyTimeouts (subtract $ tenDays - elapsed)
+  -- NB: any timeouts registered right before the block or immediately afterwards
+  -- would result in strange behavior. Perhaps do an atomic modify of the IORef
+  -- holding the timeout queue that covers the whole transaction?
+#endif
   pure ()
 
 runPrompt :: String -> M.Map String String -> a -> a
@@ -116,9 +137,9 @@ runPromptM srcLoc vars = runPrompt srcLoc vars $ pure ()
 runPromptIO :: MonadIO m => String -> M.Map String String -> m ()
 runPromptIO srcLoc vars = liftIO . HL.runInputTBehavior HL.defaultBehavior settings $ do
     HL.outputStrLn . unlines $
-      [ color "31" "### Breakpoint Hit ###"
-      , color "37" $ "(" <> srcLoc <> ")"
-      ] ++ (color "36" <$> varNames)
+      [ color red "### Breakpoint Hit ###"
+      , color grey $ "(" <> srcLoc <> ")"
+      ] ++ (color cyan <$> varNames)
     inputLoop
   where
     varNames = M.keys vars
@@ -126,9 +147,9 @@ runPromptIO srcLoc vars = liftIO . HL.runInputTBehavior HL.defaultBehavior setti
     completion = HL.completeWord' Nothing isSpace $ \str ->
       pure $ HL.simpleCompletion
         <$> filter (str `L.isPrefixOf`) varNames
-    printVar var val = HL.outputStrLn $ color "36" (var ++ " =\n") ++ prettify val
+    printVar var val = HL.outputStrLn $ color cyan (var ++ " =\n") ++ prettify val
     inputLoop = do
-      mInp <- HL.getInputLine $ color "32" "Enter variable name: "
+      mInp <- HL.getInputLine $ color green "Enter variable name: "
       case mInp of
         Just (L.dropWhileEnd isSpace . dropWhile isSpace -> inp)
           | not (null inp) -> do
@@ -139,9 +160,15 @@ runPromptIO srcLoc vars = liftIO . HL.runInputTBehavior HL.defaultBehavior setti
 color :: String -> String -> String
 color c s = "\ESC[" <> c <> "m\STX" <> s <> "\ESC[m\STX"
 
+red, green, grey, cyan :: String
+red = "31"
+green = "32"
+grey = "37"
+cyan = "36"
+
 printVars :: M.Map String String -> String
 printVars vars =
-  let mkLine (k, v) = color "36" (k <> " =\n") <> prettify v
+  let mkLine (k, v) = color cyan (k <> " =\n") <> prettify v
    in unlines . L.intersperse "" $ mkLine <$> M.toList vars
 
 prettify :: String -> String
