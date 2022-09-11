@@ -49,9 +49,14 @@ as
 ```
 ### Breakpoint Hit ###
 (app/Main.hs:24:3-6)
-x = "input"
-y = 2
-z = <Bool -> Bool>
+x =
+  "input"
+
+y =
+  2
+
+z =
+  <Bool -> Bool>
 
 Press enter to continue
 ```
@@ -86,12 +91,12 @@ with a blank line.
 - Currently only supports GHC version 8.10.x, 9.0.x, and 9.2.x
 - Printing values may cause thunks to be evaluated earlier than they otherwise
   would which could be problematic for programs that rely heavily on laziness.
-- Calls to `threadDelay` are not paused by breakpoints in the sense that time
-  continues to elapse, however they won't unblock until the breakpoint
-  finishes.
 - `ApplicativeDo` can sometimes cause variables that are in scope to not be traced.
 - Implicit params are not currently supported
 - `RecursiveDo` binds aren't visible before they are bound, despite being in scope.
 - If there is anything buffered in `stdin` then that will interfere with the
   blocking mechanism.
 - Concurrent threads are not blocked in GHC < 9.2.x
+- In GHC < 9.2.x, calls to `threadDelay` are not suspended by breakpoints in
+  the sense that time continues to elapse, however they won't unblock until the
+  breakpoint finishes.
