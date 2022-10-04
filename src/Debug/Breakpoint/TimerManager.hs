@@ -1,4 +1,5 @@
 {-# OPTIONS_GHC -Wno-missing-signatures #-}
+{-# LANGUAGE TypeApplications #-}
 {-# LANGUAGE TemplateHaskell #-}
 {-# LANGUAGE CPP #-}
 module Debug.Breakpoint.TimerManager
@@ -6,6 +7,8 @@ module Debug.Breakpoint.TimerManager
   , suspendTimeouts
   ) where
 
+import           Control.Concurrent(rtsSupportsBoundThreads)
+import           Control.Monad (when)
 import           Data.Foldable (foldl')
 import           Data.IORef (atomicModifyIORef')
 import           Data.Word (Word64)
@@ -13,6 +16,7 @@ import           Data.Word (Word64)
 import qualified GHC.Clock as Clock
 #endif
 import           GHC.Event
+import           Language.Haskell.TH
 import           Language.Haskell.TH.Syntax
 
 --------------------------------------------------------------------------------
@@ -51,6 +55,46 @@ wakeManager =
            (NameG VarName (PkgName "base") (ModName "GHC.Event.TimerManager"))
    )
 
+-- Windows specific definitions
+#if defined(mingw32_HOST_OS)
+modifyDelay =
+  $( do
+     let delayName = Name (OccName "Delay")
+                          (NameG DataName (PkgName "base") (ModName "GHC.Conc.Windows"))
+
+         matchDelay f =
+           match (conP delayName [varP $ mkName "secs", varP $ mkName "mvar"]) body []
+             where
+               body = normalB $ appsE [ conE delayName
+                                      , appE (varE $ mkName "f") (varE $ mkName "secs")
+                                      , varE $ mkName "mvar"
+                                      ]
+
+         delaySTMName = Name (OccName "DelaySTM")
+                          (NameG DataName (PkgName "base") (ModName "GHC.Conc.Windows"))
+
+         matchDelaySTM f =
+           match (conP delaySTMName [varP $ mkName "secs", varP $ mkName "tvar"]) body []
+             where
+               body = normalB $ appsE [ conE delaySTMName
+                                      , appE (varE $ mkName "f") (varE $ mkName "secs")
+                                      , varE $ mkName "tvar"
+                                      ]
+
+     lamE [varP $ mkName "f", varP $ mkName "delay"] $
+       caseE (varE $ mkName "delay")
+         [ matchDelay
+         , matchDelaySTM
+         ]
+   )
+
+pendingDelays =
+  $(pure $ VarE $
+      Name (OccName "pendingDelays")
+           (NameG VarName (PkgName "base") (ModName "GHC.Conc.Windows"))
+  )
+#endif
+
 --------------------------------------------------------------------------------
 -- Timeout editing
 --------------------------------------------------------------------------------
@@ -65,13 +109,23 @@ editTimeouts mgr g = do
 -- | Modify the times in nanoseconds at which all currently registered timeouts
 -- will expire.
 modifyTimeouts :: (Word64 -> Word64) -> IO ()
-modifyTimeouts f = do
-  mgr <- getSystemTimerManager
-  editTimeouts mgr $ \pq ->
-    let els = psqToList pq
-        upd pq' k =
-          psqAdjust f k pq'
-     in foldl' upd pq (psqKey <$> els)
+modifyTimeouts f =
+  -- This only works for the threaded RTS
+  when rtsSupportsBoundThreads $ do
+#if defined(mingw32_HOST_OS)
+    -- Windows has its own way of tracking delays
+    let modifyDelay = \case
+          Delay x y -> Delay (f x) y
+          DelaySTM x y -> DelaySTM (f x) y
+    atomicModifyIORef'_ pendingDelays (fmap $ modifyDelay f)
+#else
+    mgr <- getSystemTimerManager
+    editTimeouts mgr $ \pq ->
+      let els = psqToList pq
+          upd pq' k =
+            psqAdjust f k pq'
+       in foldl' upd pq (psqKey <$> els)
+#endif
 
 -- | has the effect of suspending timeouts while an action is occurring. This
 -- is only used for GHC >= 9.2 because the semantics are too strange without

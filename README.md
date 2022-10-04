@@ -97,6 +97,6 @@ with a blank line.
 - If there is anything buffered in `stdin` then that will interfere with the
   blocking mechanism.
 - Concurrent threads are not blocked in GHC < 9.2.x
-- In GHC < 9.2.x, calls to `threadDelay` are not suspended by breakpoints in
-  the sense that time continues to elapse, however they won't unblock until the
-  breakpoint finishes.
+- In GHC < 9.2.x or when using the non-threaded runtime, calls to `threadDelay`
+  are not suspended by breakpoints in the sense that time continues to elapse,
+  however they won't unblock until the breakpoint finishes.

@@ -14,6 +14,7 @@ module Debug.Breakpoint.GhcFacade
   , locA'
   , mkWildValBinder'
   , pprTypeForUser'
+  , showSDocOneLine'
   , findImportedModule'
   , findPluginModule'
   , pattern HsLet'
@@ -129,6 +130,7 @@ import           GHC.Core.Type as Ghc
 import           GHC.Core.TyCon as Ghc
 import           GHC.Core.Ppr.TyThing as Ghc
 import           GHC.Driver.Types as Ghc
+import           GHC.Driver.Session as Ghc
 import           GHC.Hs.Expr as Ghc
 import           GHC.Hs.Pat as Ghc
 import           GHC.Hs.Decls as Ghc
@@ -168,6 +170,7 @@ import           TcPluginM as Ghc hiding (lookupOrig, getTopEnv, getEnvs, newUni
 import           GHC.Hs.Decls as Ghc
 import           TcRnMonad as Ghc
 import           Plugins as Ghc hiding (TcPlugin)
+import           DynFlags as Ghc
 import qualified TcPluginM as Plugin
 #endif
 
@@ -237,6 +240,17 @@ pprTypeForUser' :: Ghc.Type -> Ghc.SDoc
 pprTypeForUser' = Ghc.pprSigmaType
 #else
 pprTypeForUser' = Ghc.pprTypeForUser
+#endif
+
+showSDocOneLine' :: Ghc.SDoc -> String
+showSDocOneLine' =
+#if MIN_VERSION_ghc(9,2,0)
+  Ghc.showSDocOneLine Ghc.defaultSDocContext
+#elif MIN_VERSION_ghc(9,0,0)
+  Ghc.showSDocOneLine
+    $ Ghc.initDefaultSDocContext Ghc.unsafeGlobalDynFlags
+#else
+  Ghc.showSDocOneLine Ghc.unsafeGlobalDynFlags
 #endif
 
 findImportedModule' :: Ghc.ModuleName -> Ghc.TcPluginM Ghc.FindResult

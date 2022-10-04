@@ -150,6 +150,7 @@ printVars vars =
   let mkLine (k, v) = color cyan (k <> " =\n") <> prettify v
    in unlines . L.intersperse "" $ mkLine <$> M.toList vars
 
+-- TODO don't apply parsing to things inside angle brackets
 prettify :: String -> String
 prettify = T.unpack
          . PS.pStringOpt
@@ -824,7 +825,7 @@ instantiateVars tyVarMap tys = replace <$> tys
 
 buildUnshowableDict :: Ghc.Type -> Ghc.TcM Ghc.EvTerm
 buildUnshowableDict ty = do
-  let tyString = Ghc.showSDocUnsafe $ Ghc.pprTypeForUser' ty
+  let tyString = Ghc.showSDocOneLine' $ Ghc.pprTypeForUser' ty
   str <- Ghc.mkStringExpr $ "<" <> tyString <> ">"
   pure . Ghc.EvExpr $
     Ghc.mkCoreLams [Ghc.mkWildValBinder' ty] str
