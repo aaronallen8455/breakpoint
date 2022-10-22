@@ -1,6 +1,8 @@
+{-# LANGUAGE ScopedTypeVariables #-}
 {-# LANGUAGE RecordWildCards #-}
 {-# LANGUAGE Arrows #-}
 import           Control.Arrow
+import           Control.Monad
 import qualified Data.Map as M
 import           Data.Maybe
 import           Test.Tasty
@@ -34,6 +36,8 @@ testTree =
     , testCase "arrow notation" arrowNotation
     , testCase "record field bindings" recFieldBindings
     , testCase "record wild cards" recWildCards
+    , testCase "do block in where bind" doBlockInWhereBind
+    , testCase "don't capture do bind in its body" captureInBodyOfDoBind
     , ApDo.testTree
     ]
     -- TODO
@@ -198,3 +202,29 @@ recWildCards = test19 MkRec {fld=True} @?= M.fromList [("fld", "True")]
 test19 :: Rec -> M.Map String String
 test19 MkRec{..} = captureVars
 
+doBlockInWhereBind :: Assertion
+doBlockInWhereBind = do
+  r <- test20
+  M.delete "whereDo" r @?= M.fromList [("x", "True")]
+
+test20 :: forall m. Monad m => m (M.Map String String)
+test20 = do
+  x <- whereDo True
+  pure captureVars
+  where
+    whereDo :: Bool -> m Bool
+    whereDo y = do
+      pure y
+
+captureInBodyOfDoBind :: Assertion
+captureInBodyOfDoBind = do
+  r <- test21
+  M.delete "wb" r @?= M.fromList [("y", "True")]
+
+test21 :: IO (M.Map String String)
+test21 = do
+  x <- wb $ \y -> do
+    pure captureVars
+  pure x
+  where
+    wb k = k True

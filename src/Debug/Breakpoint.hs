@@ -13,6 +13,7 @@
 {-# LANGUAGE ScopedTypeVariables #-}
 {-# LANGUAGE FlexibleContexts #-}
 {-# LANGUAGE GADTs #-}
+{-# LANGUAGE ImplicitParams #-}
 module Debug.Breakpoint
   ( -- * Plugin
     plugin
@@ -63,7 +64,10 @@ import qualified GHC.Tc.Plugin as Plugin
 import qualified TcPluginM as Plugin
 #endif
 import           GHC.Word
+import qualified System.Console.ANSI as ANSI
 import qualified System.Console.Haskeline as HL
+import           System.Environment (lookupEnv)
+import           System.IO (stdout)
 import           System.IO.Unsafe (unsafePerformIO)
 import qualified Text.Pretty.Simple as PS
 import qualified Text.Pretty.Simple.Internal.Color as PS
@@ -96,6 +100,10 @@ printAndWaitM srcLoc vars = printAndWait srcLoc vars $ pure ()
 
 printAndWaitIO :: MonadIO m => String -> M.Map String String -> m ()
 printAndWaitIO srcLoc vars = liftIO $ do
+  useColor <- ANSI.hSupportsANSIColor stdout
+  let ?useColor = useColor
+  prettyPrint <- usePrettyPrinting
+  let ?prettyPrint = prettyPrint
   TM.suspendTimeouts $ do
     traceIO $ L.intercalate "\n"
       [ color red "### Breakpoint Hit ###"
@@ -113,31 +121,42 @@ runPrompt srcLoc vars x =
 runPromptM :: Applicative m => String -> M.Map String String -> m ()
 runPromptM srcLoc vars = runPrompt srcLoc vars $ pure ()
 
-runPromptIO :: MonadIO m => String -> M.Map String String -> m ()
+runPromptIO :: forall m. MonadIO m => String -> M.Map String String -> m ()
 runPromptIO srcLoc vars = liftIO . HL.runInputTBehavior HL.defaultBehavior settings $ do
+    useColor <- liftIO $ ANSI.hSupportsANSIColor stdout
+    let ?useColor = useColor
+    prettyPrint <- liftIO usePrettyPrinting
+    let ?prettyPrint = prettyPrint
+    let printVar var val =
+          HL.outputStrLn $ color cyan (var ++ " =\n") ++ prettify val
+        inputLoop = do
+          mInp <- HL.getInputLine $ color green "Enter variable name: "
+          case mInp of
+            Just (L.dropWhileEnd isSpace . dropWhile isSpace -> inp)
+              | not (null inp) -> do
+                  traverse_ (printVar inp) $ M.lookup inp vars
+                  inputLoop
+            _ -> pure ()
     HL.outputStrLn . unlines $
       [ color red "### Breakpoint Hit ###"
       , color grey $ "(" <> srcLoc <> ")"
       ] ++ (color cyan <$> varNames)
     inputLoop
   where
-    varNames = M.keys vars
     settings = HL.setComplete completion HL.defaultSettings
     completion = HL.completeWord' Nothing isSpace $ \str ->
       pure $ HL.simpleCompletion
         <$> filter (str `L.isPrefixOf`) varNames
-    printVar var val = HL.outputStrLn $ color cyan (var ++ " =\n") ++ prettify val
-    inputLoop = do
-      mInp <- HL.getInputLine $ color green "Enter variable name: "
-      case mInp of
-        Just (L.dropWhileEnd isSpace . dropWhile isSpace -> inp)
-          | not (null inp) -> do
-              traverse_ (printVar inp) $ M.lookup inp vars
-              inputLoop
-        _ -> pure ()
+    varNames = M.keys vars
 
-color :: String -> String -> String
-color c s = "\ESC[" <> c <> "m\STX" <> s <> "\ESC[m\STX"
+usePrettyPrinting :: IO Bool
+usePrettyPrinting = isNothing <$> lookupEnv "NO_PRETTY_PRINT"
+
+color :: (?useColor :: Bool) => String -> String -> String
+color c s =
+  if ?useColor
+     then "\ESC[" <> c <> "m\STX" <> s <> "\ESC[m\STX"
+     else s
 
 red, green, grey, cyan :: String
 red = "31"
@@ -145,26 +164,32 @@ green = "32"
 grey = "37"
 cyan = "36"
 
-printVars :: M.Map String String -> String
+printVars :: (?useColor :: Bool, ?prettyPrint :: Bool)
+          => M.Map String String -> String
 printVars vars =
-  let mkLine (k, v) = color cyan (k <> " =\n") <> prettify v
+  let eqSign | ?prettyPrint = " =\n"
+             | otherwise = " = "
+      mkLine (k, v) = color cyan (k <> eqSign) <> prettify v
    in unlines . L.intersperse "" $ mkLine <$> M.toList vars
 
 -- TODO don't apply parsing to things inside angle brackets
-prettify :: String -> String
-prettify = T.unpack
-         . PS.pStringOpt
-             PS.defaultOutputOptionsDarkBg
-               { PS.outputOptionsInitialIndent = 2
-               , PS.outputOptionsIndentAmount = 2
-               , PS.outputOptionsColorOptions = Just PS.ColorOptions
-                 { PS.colorQuote = PS.colorNull
-                 , PS.colorString = PS.colorBold PS.Vivid PS.Blue
-                 , PS.colorError = PS.colorBold PS.Vivid PS.Red
-                 , PS.colorNum = PS.colorBold PS.Vivid PS.Green
-                 , PS.colorRainbowParens = [PS.colorBold PS.Vivid PS.Cyan]
-                 }
-               }
+prettify :: (?prettyPrint :: Bool) => String -> String
+prettify =
+  if ?prettyPrint
+  then T.unpack
+     . PS.pStringOpt
+         PS.defaultOutputOptionsDarkBg
+           { PS.outputOptionsInitialIndent = 2
+           , PS.outputOptionsIndentAmount = 2
+           , PS.outputOptionsColorOptions = Just PS.ColorOptions
+             { PS.colorQuote = PS.colorNull
+             , PS.colorString = PS.colorBold PS.Vivid PS.Blue
+             , PS.colorError = PS.colorBold PS.Vivid PS.Red
+             , PS.colorNum = PS.colorBold PS.Vivid PS.Green
+             , PS.colorRainbowParens = [PS.colorBold PS.Vivid PS.Cyan]
+             }
+           }
+  else id
 
 inactivePluginStr :: String
 inactivePluginStr =
@@ -585,7 +610,7 @@ dealWithStmt = \case
   Ghc.BindStmt' x lpat body bindExpr failExpr -> do
     let names = extractVarPats lpat
     tell names
-    bodyRes <- lift . addScopedVars names $ recurse body
+    bodyRes <- lift $ recurse body
     pure $ Ghc.BindStmt' x lpat bodyRes bindExpr failExpr
 
   Ghc.LetStmt' x (Ghc.L loc localBinds) -> do

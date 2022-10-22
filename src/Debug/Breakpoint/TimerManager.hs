@@ -56,44 +56,44 @@ wakeManager =
    )
 
 -- Windows specific definitions
-#if defined(mingw32_HOST_OS)
-modifyDelay =
-  $( do
-     let delayName = Name (OccName "Delay")
-                          (NameG DataName (PkgName "base") (ModName "GHC.Conc.Windows"))
-
-         matchDelay f =
-           match (conP delayName [varP $ mkName "secs", varP $ mkName "mvar"]) body []
-             where
-               body = normalB $ appsE [ conE delayName
-                                      , appE (varE $ mkName "f") (varE $ mkName "secs")
-                                      , varE $ mkName "mvar"
-                                      ]
-
-         delaySTMName = Name (OccName "DelaySTM")
-                          (NameG DataName (PkgName "base") (ModName "GHC.Conc.Windows"))
-
-         matchDelaySTM f =
-           match (conP delaySTMName [varP $ mkName "secs", varP $ mkName "tvar"]) body []
-             where
-               body = normalB $ appsE [ conE delaySTMName
-                                      , appE (varE $ mkName "f") (varE $ mkName "secs")
-                                      , varE $ mkName "tvar"
-                                      ]
-
-     lamE [varP $ mkName "f", varP $ mkName "delay"] $
-       caseE (varE $ mkName "delay")
-         [ matchDelay
-         , matchDelaySTM
-         ]
-   )
-
-pendingDelays =
-  $(pure $ VarE $
-      Name (OccName "pendingDelays")
-           (NameG VarName (PkgName "base") (ModName "GHC.Conc.Windows"))
-  )
-#endif
+-- #if defined(mingw32_HOST_OS)
+-- modifyDelay =
+--   $( do
+--      let delayName = Name (OccName "Delay")
+--                           (NameG DataName (PkgName "base") (ModName "GHC.Conc.Windows"))
+-- 
+--          matchDelay f =
+--            match (conP delayName [varP $ mkName "secs", varP $ mkName "mvar"]) body []
+--              where
+--                body = normalB $ appsE [ conE delayName
+--                                       , appE (varE $ mkName "f") (varE $ mkName "secs")
+--                                       , varE $ mkName "mvar"
+--                                       ]
+-- 
+--          delaySTMName = Name (OccName "DelaySTM")
+--                           (NameG DataName (PkgName "base") (ModName "GHC.Conc.Windows"))
+-- 
+--          matchDelaySTM f =
+--            match (conP delaySTMName [varP $ mkName "secs", varP $ mkName "tvar"]) body []
+--              where
+--                body = normalB $ appsE [ conE delaySTMName
+--                                       , appE (varE $ mkName "f") (varE $ mkName "secs")
+--                                       , varE $ mkName "tvar"
+--                                       ]
+-- 
+--      lamE [varP $ mkName "f", varP $ mkName "delay"] $
+--        caseE (varE $ mkName "delay")
+--          [ matchDelay
+--          , matchDelaySTM
+--          ]
+--    )
+-- 
+-- pendingDelays =
+--   $(pure $ VarE $
+--       Name (OccName "pendingDelays")
+--            (NameG VarName (PkgName "base") (ModName "GHC.Conc.Windows"))
+--   )
+-- #endif
 
 --------------------------------------------------------------------------------
 -- Timeout editing
@@ -113,11 +113,12 @@ modifyTimeouts f =
   -- This only works for the threaded RTS
   when rtsSupportsBoundThreads $ do
 #if defined(mingw32_HOST_OS)
+    pure ()
     -- Windows has its own way of tracking delays
-    let modifyDelay = \case
-          Delay x y -> Delay (f x) y
-          DelaySTM x y -> DelaySTM (f x) y
-    atomicModifyIORef'_ pendingDelays (fmap $ modifyDelay f)
+--     let modifyDelay = \case
+--           Delay x y -> Delay (f x) y
+--           DelaySTM x y -> DelaySTM (f x) y
+--     atomicModifyIORef'_ pendingDelays (fmap $ modifyDelay f)
 #else
     mgr <- getSystemTimerManager
     editTimeouts mgr $ \pq ->

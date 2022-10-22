@@ -88,7 +88,7 @@ thread is blocked while the prompt is active. To resume execution, press enter
 with a blank line.
 
 ### Caveats
-- Currently only supports GHC version 8.10.x, 9.0.x, and 9.2.x
+- Currently only supports GHC version 8.10.x, 9.0.x, 9.2.x, and 9.4.x
 - Printing values may cause thunks to be evaluated earlier than they otherwise
   would which could be problematic for programs that rely heavily on laziness.
 - `ApplicativeDo` can sometimes cause variables that are in scope to not be traced.
@@ -97,6 +97,12 @@ with a blank line.
 - If there is anything buffered in `stdin` then that will interfere with the
   blocking mechanism.
 - Concurrent threads are not blocked in GHC < 9.2.x
-- In GHC < 9.2.x or when using the non-threaded runtime, calls to `threadDelay`
-  are not suspended by breakpoints in the sense that time continues to elapse,
-  however they won't unblock until the breakpoint finishes.
+- On Windows, in GHC < 9.2.x, or when using the non-threaded runtime, calls to
+  `threadDelay` are not suspended by breakpoints in the sense that time
+  continues to elapse, however they won't unblock until the breakpoint
+  finishes.
+- Variables being traced cannot contain universally quantified type variables
+  with class constraints. This happens most commonly with a where clause
+  binding that lacks a type signature. This can typically be worked around by
+  supplying a type signature that is monomorphic or that unifies the type
+  variable with an outer scoped variable.
