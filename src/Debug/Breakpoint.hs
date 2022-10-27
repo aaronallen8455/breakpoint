@@ -793,7 +793,7 @@ buildDict
   -> Ghc.TcPluginM (Maybe Ghc.EvTerm)
 buildDict names cls tys = do
   instEnvs <- Plugin.getInstEnvs
-  case Ghc.lookupUniqueInstEnv instEnvs (showClass names) tys of
+  case Ghc.lookupUniqueInstEnv instEnvs cls tys of
     Right (clsInst, _) -> do
       let dfun = Ghc.is_dfun clsInst
           (vars, subclasses, inst) = Ghc.tcSplitSigmaTy $ Ghc.idType dfun

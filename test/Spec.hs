@@ -3,6 +3,7 @@
 {-# LANGUAGE Arrows #-}
 import           Control.Arrow
 import           Control.Monad
+import           Data.Fixed
 import qualified Data.Map as M
 import           Data.Maybe
 import           Test.Tasty
@@ -38,6 +39,7 @@ testTree =
     , testCase "record wild cards" recWildCards
     , testCase "do block in where bind" doBlockInWhereBind
     , testCase "don't capture do bind in its body" captureInBodyOfDoBind
+    , testCase "Shows type that subclass for Show" showFixedPointNumber
     , ApDo.testTree
     ]
     -- TODO
@@ -228,3 +230,11 @@ test21 = do
   pure x
   where
     wb k = k True
+
+showFixedPointNumber :: Assertion
+showFixedPointNumber = do
+  let m = test22
+  m @?= M.fromList [("x", "4.000000")]
+
+test22 :: M.Map String String
+test22 = let x = (4 :: Micro) in captureVars
