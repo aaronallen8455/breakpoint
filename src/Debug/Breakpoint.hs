@@ -80,9 +80,9 @@ import qualified Debug.Breakpoint.TimerManager as TM
 --------------------------------------------------------------------------------
 
 -- | Constructs a lazy 'Map' from the names of all visible variables at the call
--- site to a string representation of their value. Be careful about binding this
--- to a variable because that variable will also be captured, resulting in an
--- infinite loop if that element of the Map is evaluated.
+-- site to a string representation of their value. Does not include any variables
+-- whose definitions contain it. Be careful not to assign multiple variables to
+-- `captureVars` in the same scope as this will result in an infinite recursion.
 captureVars :: M.Map String String
 captureVars = mempty
 
@@ -460,16 +460,18 @@ dealWithBind :: VarSet
              -> EnvReader (Ghc.LHsBind Ghc.GhcRn)
 dealWithBind resultNames lbind = for lbind $ \case
   Ghc.FunBind {..} -> do
+    let resultNamesSansSelf =
+          M.delete (getOccNameFS $ Ghc.unLoc fun_id) resultNames
     (matchesRes, Any containsTarget)
       <- listen
-       . addScopedVars resultNames
+       . addScopedVars resultNamesSansSelf
        $ recurse fun_matches
     -- be sure to use the result names on the right so that they are overriden
     -- by any shadowing vars inside the expr.
     let rhsVars
           | containsTarget
           = Ghc.mkUniqSet . M.elems
-            . (<> resultNames) . mkVarSet
+            . (<> resultNamesSansSelf) . mkVarSet
             $ Ghc.nonDetEltsUniqSet fun_ext
           | otherwise = fun_ext
     pure Ghc.FunBind { Ghc.fun_matches = matchesRes, Ghc.fun_ext = rhsVars, .. }

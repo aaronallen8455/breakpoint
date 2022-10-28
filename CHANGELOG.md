@@ -6,6 +6,7 @@
 * Values are pretty printed using `pretty-simple`
 * Timeouts are suspended during breakpoints for GHC >= 9.2
 * Fix a bug with monadic binds in do blocks
+* Variable names are no longer visible in their definition body
 
 TODO: Add function that takes list of var names to ignore
 

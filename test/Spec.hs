@@ -81,7 +81,7 @@ test4 =
    in captureVars
 
 nestedInLet :: Assertion
-nestedInLet = M.delete "x" (test5 1) @?= M.fromList [("a", "1"), ("b", "2"), ("c", "3")]
+nestedInLet = test5 1 @?= M.fromList [("a", "1"), ("b", "2"), ("c", "3")]
 
 test5 :: Int -> M.Map String String
 test5 a =
@@ -130,7 +130,7 @@ test10 :: () -> M.Map String String
 test10 = \a -> captureVars
 
 letScoping :: Assertion
-letScoping = M.delete "a" test11 @?= M.fromList [("b", "True"), ("c", "False")]
+letScoping = test11 @?= M.fromList [("b", "True"), ("c", "False")]
 
 test11 :: M.Map String String
 test11 =
@@ -157,7 +157,7 @@ test13 = fromMaybe mempty $ do
   pure captureVars
 
 monadicBindsScoped :: Assertion
-monadicBindsScoped = M.delete "m" test14 @?= M.fromList [("a", "True")]
+monadicBindsScoped = test14 @?= M.fromList [("a", "True")]
 
 test14 :: M.Map String String
 test14 = fromMaybe mempty $ do
@@ -181,8 +181,7 @@ listComprehension = test16 @?= M.fromList [("a", "True"), ("b", "False")]
 test16 = head [ captureVars | let b = False, a <- [True] ]
 
 arrowNotation :: Assertion
-arrowNotation = M.delete "go" test17 @?= M.fromList [("a", "2"), ("b", "0"), ("x", "1")]
--- "go" has different printed type sigs for 9.0 vs 8.10
+arrowNotation = test17 @?= M.fromList [("a", "2"), ("b", "0"), ("x", "1")]
 
 test17 :: M.Map String String
 test17 = go (1 :: Int) where
