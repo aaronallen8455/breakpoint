@@ -7,8 +7,7 @@
 * Timeouts are suspended during breakpoints for GHC >= 9.2
 * Fix a bug with monadic binds in do blocks
 * Variable names are no longer visible in their definition body
-
-TODO: Add function that takes list of var names to ignore
+* Adds `excludeVars` to ingore a list of vars, especially those that don't compile
 
 ## 0.1.0.0 -- YYYY-mm-dd
 

@@ -134,11 +134,13 @@ import           GHC.Driver.Session as Ghc
 import           GHC.Hs.Expr as Ghc
 import           GHC.Hs.Pat as Ghc
 import           GHC.Hs.Decls as Ghc
+import           GHC.Hs.Lit as Ghc
 
 #elif MIN_VERSION_ghc(8,10,0)
 import           GHC.Hs.Expr as Ghc
 import           GHC.Hs.Extension as Ghc
 import           GHC.Hs.Binds as Ghc
+import           GHC.Hs.Lit as Ghc
 import           SrcLoc as Ghc
 import           GHC.Hs.Utils as Ghc
 import           Name as Ghc

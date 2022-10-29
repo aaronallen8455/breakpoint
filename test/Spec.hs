@@ -40,6 +40,7 @@ testTree =
     , testCase "do block in where bind" doBlockInWhereBind
     , testCase "don't capture do bind in its body" captureInBodyOfDoBind
     , testCase "Shows type that subclass for Show" showFixedPointNumber
+    , testCase "exclude vars" excludeVarsTest
     , ApDo.testTree
     ]
     -- TODO
@@ -237,3 +238,14 @@ showFixedPointNumber = do
 
 test22 :: M.Map String String
 test22 = let x = (4 :: Micro) in captureVars
+
+excludeVarsTest :: Assertion
+excludeVarsTest = do
+  let m = test23
+  m @?= M.fromList [("x", "True")]
+
+test23 :: M.Map String String
+test23 =
+  let x = True
+      y = False
+   in excludeVars ["y"] captureVars

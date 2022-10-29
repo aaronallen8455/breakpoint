@@ -24,6 +24,7 @@ module Debug.Breakpoint
   , queryVars
   , queryVarsM
   , queryVarsIO
+  , excludeVars
     -- * Internals
   , captureVars
   , showLev
@@ -247,6 +248,11 @@ blockOnInput :: IO Int
 blockOnInput = 1 <$ getLine
 #endif
 
+-- | Excludes the given variable names from appearing in the output of any
+-- breakpoints occurring in the given expression.
+excludeVars :: [String] -> a -> a
+excludeVars _ = id
+
 --------------------------------------------------------------------------------
 -- Plugin
 --------------------------------------------------------------------------------
@@ -282,6 +288,7 @@ renameAction gblEnv group = do
   runPromptMName <- Ghc.lookupOrig breakpointMod (Ghc.mkVarOcc "runPromptM")
   runPromptName <- Ghc.lookupOrig breakpointMod (Ghc.mkVarOcc "runPrompt")
   getSrcLocName <- Ghc.lookupOrig breakpointMod (Ghc.mkVarOcc "getSrcLoc")
+  excludeVarsName <- Ghc.lookupOrig breakpointMod (Ghc.mkVarOcc "excludeVars")
 
   let (group', _) =
         runReader (runWriterT $ recurse group)
@@ -299,6 +306,7 @@ newtype T a = T (a -> EnvReader (Maybe a))
 transform :: forall a. Data a => a -> EnvReader (Maybe a)
 transform a = runMaybeT
       $ wrap hsVarCase
+    <|> wrap hsAppCase
     <|> wrap matchCase
     <|> wrap grhssCase
     <|> wrap hsLetCase
@@ -407,6 +415,32 @@ hsVarCase (Ghc.HsVar _ (Ghc.L loc name)) = do
 
      | otherwise -> pure Nothing
 hsVarCase _ = pure Nothing
+
+--------------------------------------------------------------------------------
+-- App Expr
+--------------------------------------------------------------------------------
+
+hsAppCase :: Ghc.LHsExpr Ghc.GhcRn
+          -> EnvReader (Maybe (Ghc.LHsExpr Ghc.GhcRn))
+hsAppCase (Ghc.unLoc -> Ghc.HsApp _ f innerExpr)
+  | Ghc.HsApp _ (Ghc.unLoc -> Ghc.HsVar _ (Ghc.unLoc -> name))
+                (Ghc.unLoc -> Ghc.ExplicitList' _ exprsToExclude)
+      <- Ghc.unLoc f
+  = do
+    MkEnv{..} <- lift ask
+    if excludeVarsName /= name
+       then pure Nothing
+       else do
+         let extractVarName (Ghc.HsLit _ (Ghc.HsString _ fs)) =
+               Just $ Ghc.mkLexicalFastString fs
+             extractVarName _ = Nothing
+             varsToExclude =
+               mapMaybe (extractVarName . Ghc.unLoc) exprsToExclude
+         Just <$>
+           mapWriterT
+            (local (overVarSet $ \vs -> foldr M.delete vs varsToExclude))
+            (recurse innerExpr)
+hsAppCase _ = pure Nothing
 
 --------------------------------------------------------------------------------
 -- Match
@@ -691,6 +725,7 @@ data Env = MkEnv
   , runPromptName :: !Ghc.Name
   , runPromptMName :: !Ghc.Name
   , getSrcLocName :: !Ghc.Name
+  , excludeVarsName :: !Ghc.Name
   }
 
 overVarSet :: (VarSet -> VarSet) -> Env -> Env
