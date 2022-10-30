@@ -101,8 +101,8 @@ with a blank line.
   `threadDelay` are not suspended by breakpoints in the sense that time
   continues to elapse, however they won't unblock until the breakpoint
   finishes.
-- Variables being traced cannot contain universally quantified type variables
-  with class constraints. This happens most commonly with a where clause
-  binding that lacks a type signature. This can typically be worked around by
-  supplying a type signature that is monomorphic or that unifies the type
-  variable with an outer scoped variable.
+- Variables being traced cannot have a type that contains type variables with
+  class constraints, otherwise you get a compiler error. This happens most
+  commonly with a where clause binding that lacks a type signature. You can
+  deal with this by using `excludeVars` or giving a type signature to the
+  binding that doesn't introduce such type variables.

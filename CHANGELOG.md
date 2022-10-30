@@ -1,10 +1,10 @@
 # Revision history for breakpoint
 
-## 0.1.1.0 -- 2022-09-07
+## 0.1.1.0 -- 2022-10-30
 
 * Support for GHC 9.4.*
 * Values are pretty printed using `pretty-simple`
-* Timeouts are suspended during breakpoints for GHC >= 9.2
+* Timeouts are suspended during breakpoints for GHC >= 9.2 and non-windows
 * Fix a bug with monadic binds in do blocks
 * Variable names are no longer visible in their definition body
 * Adds `excludeVars` to ingore a list of vars, especially those that don't compile
