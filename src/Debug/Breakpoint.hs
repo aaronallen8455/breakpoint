@@ -433,9 +433,13 @@ hsAppCase (Ghc.unLoc -> Ghc.HsApp _ f innerExpr)
        else do
          let extractVarName (Ghc.HsLit _ (Ghc.HsString _ fs)) =
                Just $ Ghc.mkLexicalFastString fs
+             extractVarName (Ghc.HsOverLit _ (Ghc.OverLit' (Ghc.HsIsString _ fs))) =
+               Just $ Ghc.mkLexicalFastString fs
              extractVarName _ = Nothing
+
              varsToExclude =
                mapMaybe (extractVarName . Ghc.unLoc) exprsToExclude
+
          Just <$>
            mapWriterT
             (local (overVarSet $ \vs -> foldr M.delete vs varsToExclude))

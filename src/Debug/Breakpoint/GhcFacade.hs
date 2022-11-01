@@ -21,6 +21,7 @@ module Debug.Breakpoint.GhcFacade
   , pattern LetStmt'
   , pattern ExplicitList'
   , pattern BindStmt'
+  , pattern OverLit'
   ) where
 
 #if MIN_VERSION_ghc(9,4,0)
@@ -351,4 +352,14 @@ pattern BindStmt' x pat body expr1 expr2
     BindStmt' x pat body _ _ = Ghc.BindStmt x pat body
 #else
 pattern BindStmt' x pat body bindExpr failExpr = Ghc.BindStmt x pat body bindExpr failExpr
+#endif
+
+pattern OverLit'
+  :: Ghc.OverLitVal
+  -> Ghc.HsOverLit Ghc.GhcRn
+pattern OverLit' lit
+#if MIN_VERSION_ghc(9,4,0)
+  <- Ghc.OverLit _ lit
+#else
+  <- Ghc.OverLit _ lit _
 #endif
