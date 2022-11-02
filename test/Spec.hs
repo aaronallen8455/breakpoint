@@ -11,6 +11,7 @@ import           Test.Tasty.HUnit
 
 import           Debug.Breakpoint
 import qualified ApplicativeDo as ApDo
+import qualified OverloadedStrings as OS
 
 main :: IO ()
 main = defaultMain testTree
@@ -42,6 +43,7 @@ testTree =
     , testCase "Shows type that subclass for Show" showFixedPointNumber
     , testCase "exclude vars" excludeVarsTest
     , ApDo.testTree
+    , OS.testTree
     ]
     -- TODO
     -- Implicit Params

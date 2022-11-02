@@ -1,6 +1,6 @@
 cabal-version:      3.0
 name:               breakpoint
-version:            0.1.1.0
+version:            0.1.1.1
 synopsis:
   Set breakpoints using a GHC plugin
 
@@ -50,7 +50,7 @@ library
 
 test-suite spec
   main-is: Spec.hs
-  other-modules: ApplicativeDo
+  other-modules: ApplicativeDo, OverloadedStrings
   hs-source-dirs: test
   build-depends: base, tasty, tasty-hunit, breakpoint, containers
   type: exitcode-stdio-1.0

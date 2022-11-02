@@ -1,5 +1,8 @@
 # Revision history for breakpoint
 
+## 0.1.1.1 -- 2022-11-02
+* Support `IsString` version of string literals in `excludeVars`
+
 ## 0.1.1.0 -- 2022-10-30
 
 * Support for GHC 9.4.*
