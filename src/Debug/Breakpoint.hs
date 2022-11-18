@@ -290,9 +290,9 @@ renameAction gblEnv group = do
   getSrcLocName <- Ghc.lookupOrig breakpointMod (Ghc.mkVarOcc "getSrcLoc")
   excludeVarsName <- Ghc.lookupOrig breakpointMod (Ghc.mkVarOcc "excludeVars")
 
-  let (group', _) =
-        runReader (runWriterT $ recurse group)
-          MkEnv { varSet = mempty, .. }
+  (group', _) <-
+    runReaderT (runWriterT $ recurse group)
+      MkEnv { varSet = mempty, .. }
 
   pure (gblEnv, group')
 
@@ -337,7 +337,7 @@ hsVarCase (Ghc.HsVar _ (Ghc.L loc name)) = do
         . Ghc.ppr
         $ Ghc.locA' loc
 
-      captureVarsExpr =
+      captureVarsExpr mResultName =
         let mkTuple (Ghc.fromLexicalFastString -> varStr, n) =
               Ghc.mkLHsTupleExpr
                 [ Ghc.nlHsLit . Ghc.mkHsString $ Ghc.unpackFS varStr
@@ -349,46 +349,59 @@ hsVarCase (Ghc.HsVar _ (Ghc.L loc name)) = do
 
             mkList exprs = Ghc.noLocA' (Ghc.ExplicitList' Ghc.NoExtField exprs)
 
-         in Ghc.nlHsApp (Ghc.nlHsVar fromListName) . mkList
-              $ mkTuple <$> M.toList varSet
+            varSetWithResult
+              | Just resName <- mResultName =
+                  M.insert (Ghc.mkLexicalFastString $ Ghc.mkFastString "*result")
+                           resName
+                           varSet
+              | otherwise = varSet
 
-      bpExpr =
-        Ghc.nlHsApp
-          (Ghc.nlHsApp (Ghc.nlHsVar printAndWaitName) srcLocStringExpr)
-          captureVarsExpr
+         in Ghc.nlHsApp (Ghc.nlHsVar fromListName) . mkList
+              $ mkTuple <$> M.toList varSetWithResult
+
+      bpExpr = do
+        resultName <- Ghc.newName (Ghc.mkOccName Ghc.varName "_result_")
+        pure $
+          Ghc.mkHsLam [Ghc.nlVarPat resultName] $
+            Ghc.nlHsApp
+              (Ghc.nlHsApp
+                (Ghc.nlHsApp (Ghc.nlHsVar printAndWaitName) srcLocStringExpr)
+                (captureVarsExpr $ Just resultName)
+              )
+              (Ghc.nlHsVar resultName)
 
       bpMExpr =
         Ghc.nlHsApp
           (Ghc.nlHsApp (Ghc.nlHsVar printAndWaitMName) srcLocStringExpr)
-          captureVarsExpr
+          $ captureVarsExpr Nothing
 
       bpIOExpr =
         Ghc.nlHsApp
           (Ghc.nlHsApp (Ghc.nlHsVar printAndWaitIOName) srcLocStringExpr)
-          captureVarsExpr
+          $ captureVarsExpr Nothing
 
       queryVarsIOExpr =
         Ghc.nlHsApp
           (Ghc.nlHsApp (Ghc.nlHsVar runPromptIOName) srcLocStringExpr)
-          captureVarsExpr
+          $ captureVarsExpr Nothing
 
       queryVarsExpr =
         Ghc.nlHsApp
           (Ghc.nlHsApp (Ghc.nlHsVar runPromptName) srcLocStringExpr)
-          captureVarsExpr
+          $ captureVarsExpr Nothing
 
       queryVarsMExpr =
         Ghc.nlHsApp
           (Ghc.nlHsApp (Ghc.nlHsVar runPromptMName) srcLocStringExpr)
-          captureVarsExpr
+          $ captureVarsExpr Nothing
 
   if | captureVarsName == name -> do
          tell $ Any True
-         pure (Just $ Ghc.unLoc captureVarsExpr)
+         pure (Just . Ghc.unLoc $ captureVarsExpr Nothing)
 
      | breakpointName == name -> do
          tell $ Any True
-         pure (Just $ Ghc.unLoc bpExpr)
+         Just . Ghc.unLoc <$> lift (lift bpExpr)
 
      | breakpointMName == name -> do
          tell $ Any True
@@ -707,7 +720,7 @@ hsProcCase _ = pure Nothing
 --------------------------------------------------------------------------------
 
 -- The writer is for tracking if an inner expression contains the target name
-type EnvReader = WriterT Any (Reader Env)
+type EnvReader = WriterT Any (ReaderT Env Ghc.TcM)
 
 type VarSet = M.Map Ghc.LexicalFastString' Ghc.Name
 
