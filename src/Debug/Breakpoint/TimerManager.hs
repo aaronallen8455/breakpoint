@@ -3,18 +3,23 @@
 {-# LANGUAGE TemplateHaskell #-}
 {-# LANGUAGE CPP #-}
 module Debug.Breakpoint.TimerManager
-  ( modifyTimeouts
-  , suspendTimeouts
+  ( suspendTimeouts
   ) where
+
+#if defined(mingw32_HOST_OS) || !MIN_VERSION_ghc(9,2,0)
+-- Since Windows has its own timeout manager internals, I'm choosing not to support it for now.
+
+suspendTimeouts :: IO a -> IO a
+suspendTimeouts = id
+
+#else
 
 import           Control.Concurrent(rtsSupportsBoundThreads)
 import           Control.Monad (when)
 import           Data.Foldable (foldl')
 import           Data.IORef (atomicModifyIORef')
 import           Data.Word (Word64)
-#if MIN_VERSION_ghc(9,2,0)
 import qualified GHC.Clock as Clock
-#endif
 import           GHC.Event
 import           Language.Haskell.TH
 import           Language.Haskell.TH.Syntax
@@ -112,27 +117,24 @@ modifyTimeouts :: (Word64 -> Word64) -> IO ()
 modifyTimeouts f =
   -- This only works for the threaded RTS
   when rtsSupportsBoundThreads $ do
-#if defined(mingw32_HOST_OS)
-    pure ()
-    -- Windows has its own way of tracking delays
+-- #if defined(mingw32_HOST_OS)
+--     -- Windows has its own way of tracking delays
 --     let modifyDelay = \case
 --           Delay x y -> Delay (f x) y
 --           DelaySTM x y -> DelaySTM (f x) y
 --     atomicModifyIORef'_ pendingDelays (fmap $ modifyDelay f)
-#else
+-- #else
     mgr <- getSystemTimerManager
     editTimeouts mgr $ \pq ->
       let els = psqToList pq
           upd pq' k =
             psqAdjust f k pq'
        in foldl' upd pq (psqKey <$> els)
-#endif
 
 -- | has the effect of suspending timeouts while an action is occurring. This
 -- is only used for GHC >= 9.2 because the semantics are too strange without
 -- the ability to freeze the runtime.
 suspendTimeouts :: IO a -> IO a
-#if MIN_VERSION_ghc(9,2,0)
 suspendTimeouts action = do
   let oneYear = 1000 * 1000000 * 60 * 60 * 24 * 365
   -- Add a large length of time to all timeouts so that they don't immediately
@@ -148,6 +150,5 @@ suspendTimeouts action = do
   -- would result in strange behavior. Perhaps do an atomic modify of the IORef
   -- holding the timeout queue that covers the whole transaction?
   pure r
-#else
-suspendTimeouts = id
+
 #endif
