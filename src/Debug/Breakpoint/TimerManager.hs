@@ -17,12 +17,13 @@ suspendTimeouts = id
 import           Control.Concurrent(rtsSupportsBoundThreads)
 import           Control.Monad (when)
 import           Data.Foldable (foldl')
-import           Data.IORef (atomicModifyIORef')
+import           Data.IORef
 import           Data.Word (Word64)
 import qualified GHC.Clock as Clock
 import           GHC.Event
 import           Language.Haskell.TH
 import           Language.Haskell.TH.Syntax
+import           System.IO.Unsafe
 
 --------------------------------------------------------------------------------
 -- Hidden functions imported via TH
@@ -136,19 +137,30 @@ modifyTimeouts f =
 -- the ability to freeze the runtime.
 suspendTimeouts :: IO a -> IO a
 suspendTimeouts action = do
-  let oneYear = 1000 * 1000000 * 60 * 60 * 24 * 365
-  -- Add a large length of time to all timeouts so that they don't immediately
-  -- expire when blocking ends
-  modifyTimeouts (+ oneYear)
-  before <- Clock.getMonotonicTimeNSec
-  r <- action
-  after <- Clock.getMonotonicTimeNSec
-  let elapsed = after - before
-  -- Set timeouts back to where they were plus the length of time spent blocking
-  modifyTimeouts (subtract $ oneYear - elapsed)
-  -- NB: any timeouts registered right before the block or immediately afterwards
-  -- would result in strange behavior. Perhaps do an atomic modify of the IORef
-  -- holding the timeout queue that covers the whole transaction?
-  pure r
+  alreadySuspended <- readIORef timeoutsSuspended
+  -- Don't allow nested breakpoints to both modify timeouts
+  if alreadySuspended || not rtsSupportsBoundThreads
+     then action
+     else do
+       writeIORef timeoutsSuspended True
+       let oneYear = 1000 * 1000000 * 60 * 60 * 24 * 365
+       -- Add a large length of time to all timeouts so that they don't immediately
+       -- expire when blocking ends
+       modifyTimeouts (+ oneYear)
+       before <- Clock.getMonotonicTimeNSec
+       r <- action
+       after <- Clock.getMonotonicTimeNSec
+       let elapsed = after - before
+       -- Set timeouts back to where they were plus the length of time spent blocking
+       modifyTimeouts (subtract $ oneYear - elapsed)
+       -- NB: any timeouts registered right before the block or immediately afterwards
+       -- would result in strange behavior. Perhaps do an atomic modify of the IORef
+       -- holding the timeout queue that covers the whole transaction?
+       writeIORef timeoutsSuspended False
+       pure r
+
+timeoutsSuspended :: IORef Bool
+timeoutsSuspended = unsafePerformIO $ newIORef False
+{-# NOINLINE timeoutsSuspended #-}
 
 #endif

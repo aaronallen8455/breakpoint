@@ -19,7 +19,8 @@ the file and importing the `Debug.Breakpoint` module. You can then use the
 a breakpoint.
 
 - `breakpoint :: a -> a` is for use in pure code. Apart from the side-effect of
-  setting a breakpoint, it is the identity function.
+  setting a breakpoint, it is the identity function. The value passed to `breakpoint`
+  will appear as a variable called `*result` in the output.
 - `breakpointIO :: MonadIO m => m ()` is for monadic code that can perform IO.
 - `breakpointM :: Applicative f => f ()` is for arbitrary `Applicative`
   contexts.

@@ -1,8 +1,9 @@
 # Revision history for breakpoint
 
 ## 0.1.2.0 -- 2022-11-18
-* `breakpoint` includes a `*result` binding in its output
+* `breakpoint` and `queryVars` include a `*result` binding in their output
 * Fix a bug breaking Windows compatibility
+* Fix a bug with overlapping breakpoints and timeouts
 
 ## 0.1.1.1 -- 2022-11-02
 * Support `IsString` version of string literals in `excludeVars`

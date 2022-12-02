@@ -385,10 +385,16 @@ hsVarCase (Ghc.HsVar _ (Ghc.L loc name)) = do
           (Ghc.nlHsApp (Ghc.nlHsVar runPromptIOName) srcLocStringExpr)
           $ captureVarsExpr Nothing
 
-      queryVarsExpr =
-        Ghc.nlHsApp
-          (Ghc.nlHsApp (Ghc.nlHsVar runPromptName) srcLocStringExpr)
-          $ captureVarsExpr Nothing
+      queryVarsExpr = do
+        resultName <- Ghc.newName (Ghc.mkOccName Ghc.varName "_result_")
+        pure $
+          Ghc.mkHsLam [Ghc.nlVarPat resultName] $
+            Ghc.nlHsApp
+              (Ghc.nlHsApp
+                (Ghc.nlHsApp (Ghc.nlHsVar runPromptName) srcLocStringExpr)
+                (captureVarsExpr $ Just resultName)
+              )
+              (Ghc.nlHsVar resultName)
 
       queryVarsMExpr =
         Ghc.nlHsApp
@@ -417,7 +423,7 @@ hsVarCase (Ghc.HsVar _ (Ghc.L loc name)) = do
 
      | queryVarsName == name -> do
          tell $ Any True
-         pure (Just $ Ghc.unLoc queryVarsExpr)
+         Just . Ghc.unLoc <$> lift (lift queryVarsExpr)
 
      | queryVarsMName == name -> do
          tell $ Any True
