@@ -1,6 +1,6 @@
 cabal-version:      3.0
 name:               breakpoint
-version:            0.1.2.0
+version:            0.1.2.1
 synopsis:
   Set breakpoints using a GHC plugin
 
@@ -15,7 +15,7 @@ license:            MIT
 license-file:       LICENSE
 author:             Aaron Allen
 maintainer:         aaronallen8455@gmail.com
-tested-with: GHC==9.4.2, GHC==9.2.2, GHC==9.0.2, GHC==8.10.7
+tested-with: GHC==9.6.1, GHC==9.4.2, GHC==9.2.2, GHC==9.0.2, GHC==8.10.7
 bug-reports: https://github.com/aaronallen8455/breakpoint/issues
 
 -- A copyright notice.
@@ -33,13 +33,13 @@ library
 
     -- LANGUAGE extensions used by modules in this package.
     -- other-extensions:
-    build-depends:    base >=4.14.0.0 && <4.18.0.0,
+    build-depends:    base >=4.14.0.0 && <4.19.0.0,
                       ghc,
                       containers,
                       mtl,
                       transformers,
                       haskeline >= 0.8.2,
-                      pretty-simple,
+                      pretty-simple >= 4.0.0.0,
                       text,
                       template-haskell,
                       ansi-terminal

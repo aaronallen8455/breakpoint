@@ -1,5 +1,8 @@
 # Revision history for breakpoint
 
+## 0.1.2.1 -- 2023-03-12
+* Support GHC 9.6.x
+
 ## 0.1.2.0 -- 2022-11-18
 * `breakpoint` and `queryVars` include a `*result` binding in their output
 * Fix a bug breaking Windows compatibility
