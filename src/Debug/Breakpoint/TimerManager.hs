@@ -1,5 +1,4 @@
 {-# OPTIONS_GHC -Wno-missing-signatures #-}
-{-# LANGUAGE TypeApplications #-}
 {-# LANGUAGE TemplateHaskell #-}
 {-# LANGUAGE CPP #-}
 module Debug.Breakpoint.TimerManager

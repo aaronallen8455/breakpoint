@@ -1,5 +1,6 @@
 {-# LANGUAGE DataKinds #-} -- for 9.0
 {-# LANGUAGE CPP #-}
+{-# LANGUAGE BangPatterns #-}
 {-# LANGUAGE ViewPatterns #-}
 {-# LANGUAGE MagicHash #-}
 {-# LANGUAGE FlexibleInstances #-}
@@ -33,6 +34,7 @@ module Debug.Breakpoint
   , getSrcLoc
   ) where
 
+import           Control.DeepSeq (force)
 import           Control.Monad.IO.Class
 import           Data.Char (isSpace)
 import           Data.Foldable
@@ -87,11 +89,12 @@ printAndWaitIO srcLoc vars = liftIO $ do
   let ?useColor = useColor
   prettyPrint <- usePrettyPrinting
   let ?prettyPrint = prettyPrint
+  let !printedVars = force (printVars vars)
   TM.suspendTimeouts $ do
     traceIO $ L.intercalate "\n"
       [ color red "### Breakpoint Hit ###"
       , color grey "(" <> srcLoc <> ")"
-      , printVars vars
+      , printedVars
       , color green "Press enter to continue"
       ]
     void blockOnInput
