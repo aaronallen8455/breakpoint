@@ -43,11 +43,14 @@ library
                       pretty-simple >= 4.0.0.0,
                       text,
                       template-haskell,
-                      ansi-terminal
+                      ansi-terminal,
+                      deepseq
     hs-source-dirs:   src
     default-language: Haskell2010
     ghc-options: -Wall
                  -Wno-unticked-promoted-constructors
+    if impl(ghc >= 9.2)
+      c-sources: cbits/breakpoint.c
 
 test-suite spec
   main-is: Spec.hs

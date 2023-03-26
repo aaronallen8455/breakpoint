@@ -1,5 +1,6 @@
 {-# LANGUAGE DataKinds #-} -- for 9.0
 {-# LANGUAGE CPP #-}
+{-# LANGUAGE BangPatterns #-}
 {-# LANGUAGE ViewPatterns #-}
 {-# LANGUAGE MagicHash #-}
 {-# LANGUAGE FlexibleInstances #-}
@@ -33,6 +34,7 @@ module Debug.Breakpoint
   , getSrcLoc
   ) where
 
+import           Control.DeepSeq (force)
 import           Control.Monad.IO.Class
 import           Data.Char (isSpace)
 import           Data.Foldable
@@ -87,11 +89,12 @@ printAndWaitIO srcLoc vars = liftIO $ do
   let ?useColor = useColor
   prettyPrint <- usePrettyPrinting
   let ?prettyPrint = prettyPrint
+  let !printedVars = force (printVars vars)
   TM.suspendTimeouts $ do
     traceIO $ L.intercalate "\n"
       [ color red "### Breakpoint Hit ###"
       , color grey "(" <> srcLoc <> ")"
-      , printVars vars
+      , printedVars
       , color green "Press enter to continue"
       ]
     void blockOnInput
@@ -222,9 +225,7 @@ getSrcLoc :: String
 getSrcLoc = ""
 
 #if MIN_VERSION_ghc(9,2,0)
--- Use an "unsafe" foreign function to more or less stop the runtime.
--- In older GHCs this can cause out of control CPU usage so settle for getLine instead
-foreign import ccall unsafe "stdio.h getchar" blockOnInput :: IO Int
+foreign import ccall safe "breakpoint.c block_on_input" blockOnInput :: IO ()
 #else
 blockOnInput :: IO Int
 blockOnInput = 1 <$ getLine

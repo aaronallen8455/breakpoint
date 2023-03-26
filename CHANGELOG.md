@@ -2,6 +2,9 @@
 
 ## 0.1.2.2 -- 2023-09-02
 * Improvement to instance resolution for showing arbitrary values
+* Use the RTS API to pause execution (GHC >= 9.2)
+* Strictly evaluate variable output before modifying timeouts
+* Wait for enter key instead of any char from stdin
 
 ## 0.1.2.1 -- 2023-03-12
 * Support GHC 9.6.x
