@@ -818,32 +818,38 @@ initTcPlugin = do
 
   pure MkTcPluginNames{..}
 
+data FindWantedResult
+  = FoundLifted Ghc.Type Ghc.Ct
+  | FoundUnlifted Ghc.Type Ghc.Ct
+  | NotFound
+
 findShowLevWanted
   :: TcPluginNames
   -> Ghc.Ct
-  -> Maybe (Either (Ghc.Type, Ghc.Ct) (Ghc.Type, Ghc.Ct))
+  -> FindWantedResult
 findShowLevWanted names ct
   | Ghc.CDictCan{..} <- ct
   , showLevClassName names == Ghc.getName cc_class
   , [Ghc.TyConApp tyCon [], arg2] <- cc_tyargs
-  = Just $ if Ghc.getName tyCon == Ghc.liftedRepName
-       then Right (arg2, ct)
-       else Left (arg2, ct)
-  | otherwise = Nothing
+  = if Ghc.getName tyCon == Ghc.liftedRepName
+       then FoundLifted arg2 ct
+       else FoundUnlifted arg2 ct
+  | otherwise = NotFound
 
 solver :: TcPluginNames -> Ghc.TcPluginSolver
 solver names _given _derived wanted = do
   instEnvs <- Plugin.getInstEnvs
-  solved <- for (findShowLevWanted names `mapMaybe` wanted) $ \case
-    Left (ty, ct) -> do -- unlifted type
+  solved <- for (findShowLevWanted names <$> wanted) $ \case
+    FoundUnlifted ty ct -> do
       unshowableDict <- Ghc.unsafeTcPluginTcM $ buildUnshowableDict ty
       pure $ Just (unshowableDict, ct)
-    Right (ty, ct) -> do
+    FoundLifted ty ct -> do
       mShowDict <- buildDict names (showClass names) [ty]
       pure $ mShowDict <&> \showDict ->
         let (succInst, _) = fromRight (error "impossible: no Succeed instance") $
               Ghc.lookupUniqueInstEnv instEnvs (succeedClass names) [ty]
          in (liftDict succInst ty (getEvExprFromDict showDict), ct)
+    NotFound -> pure Nothing
   pure $ Ghc.TcPluginOk (catMaybes solved) []
 
 buildDict
