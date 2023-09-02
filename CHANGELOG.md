@@ -1,5 +1,8 @@
 # Revision history for breakpoint
 
+## 0.1.2.2 -- 2023-09-02
+* Improvement to instance resolution for showing arbitrary values
+
 ## 0.1.2.1 -- 2023-03-12
 * Support GHC 9.6.x
 
