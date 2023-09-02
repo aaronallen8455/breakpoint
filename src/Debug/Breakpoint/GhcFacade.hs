@@ -211,6 +211,7 @@ import           TcRnMonad as Ghc
 import           Plugins as Ghc hiding (TcPlugin)
 import           DynFlags as Ghc
 import qualified TcPluginM as Plugin
+import           TcOrigin as Ghc
 #endif
 
 liftedRepName :: Ghc.Name
