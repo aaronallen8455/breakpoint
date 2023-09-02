@@ -789,6 +789,7 @@ depAnalBinds binds_w_dus
 data TcPluginNames =
   MkTcPluginNames
     { showLevClassName :: !Ghc.Name
+    , showLevNameTc :: !Ghc.Name
     , showClass :: !Ghc.Class
     , succeedClass :: !Ghc.Class
     , showWrapperTyCon :: !Ghc.TyCon
@@ -812,6 +813,7 @@ initTcPlugin = do
     Ghc.findImportedModule' (Ghc.mkModuleName "GHC.Show")
 
   showLevClassName <- Plugin.lookupOrig breakpointMod (Ghc.mkClsOcc "ShowLev")
+  showLevNameTc <- Plugin.lookupOrig breakpointMod (Ghc.mkVarOcc "showLev")
   showClass <- Plugin.tcLookupClass =<< Plugin.lookupOrig showMod (Ghc.mkClsOcc "Show")
   succeedClass <- Plugin.tcLookupClass =<< Plugin.lookupOrig breakpointMod (Ghc.mkClsOcc "Succeed")
   showWrapperTyCon <- Plugin.tcLookupTyCon =<< Plugin.lookupOrig breakpointMod (Ghc.mkClsOcc "ShowWrapper")
@@ -848,11 +850,8 @@ findShowWithSuperclass names ct
   = Just (arg, ct)
   | otherwise = Nothing
   where
-    hasShowLevSuperclass (Ghc.WantedSuperclassOrigin predTy subOrigin)
-      | Just (predCon, _) <- Ghc.splitTyConApp_maybe predTy
-      , Ghc.getName predCon == showLevClassName names
-      = True
-      | otherwise = hasShowLevSuperclass subOrigin
+    hasShowLevSuperclass (Ghc.OccurrenceOf name)
+      = name == showLevNameTc names
     hasShowLevSuperclass _ = False
 
 solver :: TcPluginNames -> Ghc.TcPluginSolver
@@ -862,7 +861,6 @@ solver names _given _derived wanted = do
   -- Check if wanted is ShowLev
   --   * Create a new wanted for Show
   --   * Use its EvBindId as the inner dict for ShowLev
-  --   * Set its CtOrigin to be a superclass of ShowLev
   --   * Emit the new wanted
   (showLevDicts, mNewWanteds) <- fmap (unzip . catMaybes) $
     for (findShowLevWanted names <$> wanted) $ \case
@@ -879,8 +877,8 @@ solver names _given _derived wanted = do
           )
       NotFound -> pure Nothing
 
-  -- Check if wanted is Show with a superclass chain that includes ShowLev
-  -- and create the missing Show dict if so.
+  -- Check if wanted is Show that arises from a use of showLev and create the
+  -- missing Show dict if so.
   unshowableDicts <- for (findShowWithSuperclass names `mapMaybe` wanted) $
     \(ty, ct) -> do
         dict <- lookupUnshowableDict names ty
@@ -896,14 +894,9 @@ buildShowLevDict
   -> Ghc.Type
   -> Ghc.TcPluginM (Ghc.EvTerm, Ghc.Ct)
 buildShowLevDict names showLevWanted ty = do
-  let ctLoc = (Ghc.ctLoc showLevWanted)
-        { Ghc.ctl_origin =
-            Ghc.WantedSuperclassOrigin (Ghc.ctPred showLevWanted)
-                                       (Ghc.ctOrigin showLevWanted)
-        }
   showWantedEv <-
     Plugin.newWanted
-      ctLoc
+      (Ghc.ctLoc showLevWanted)
       (Ghc.mkTyConApp (Ghc.classTyCon $ showClass names) [ty])
   let showCt = Ghc.mkNonCanonical showWantedEv
   pure (Ghc.ctEvTerm showWantedEv, showCt)
