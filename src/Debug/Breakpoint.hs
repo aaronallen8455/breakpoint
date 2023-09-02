@@ -836,83 +836,96 @@ findShowLevWanted names ct
        else FoundUnlifted arg2 ct
   | otherwise = NotFound
 
+findShowWithSuperclass
+  :: TcPluginNames
+  -> Ghc.Ct
+  -> Maybe (Ghc.Type, Ghc.Ct)
+findShowWithSuperclass names ct
+  | Ghc.CDictCan{..} <- ct
+  , Ghc.getName (showClass names) == Ghc.getName cc_class
+  , hasShowLevSuperclass . Ghc.ctLocOrigin $ Ghc.ctev_loc cc_ev
+  , [arg] <- cc_tyargs
+  = Just (arg, ct)
+  | otherwise = Nothing
+  where
+    hasShowLevSuperclass (Ghc.WantedSuperclassOrigin predTy subOrigin)
+      | Just (predCon, _) <- Ghc.splitTyConApp_maybe predTy
+      , Ghc.getName predCon == showLevClassName names
+      = True
+      | otherwise = hasShowLevSuperclass subOrigin
+    hasShowLevSuperclass _ = False
+
 solver :: TcPluginNames -> Ghc.TcPluginSolver
 solver names _given _derived wanted = do
   instEnvs <- Plugin.getInstEnvs
-  solved <- for (findShowLevWanted names <$> wanted) $ \case
-    FoundUnlifted ty ct -> do
-      unshowableDict <- Ghc.unsafeTcPluginTcM $ buildUnshowableDict ty
-      pure $ Just (unshowableDict, ct)
-    FoundLifted ty ct -> do
-      mShowDict <- buildDict names (showClass names) [ty]
-      pure $ mShowDict <&> \showDict ->
+
+  -- Check if wanted is ShowLev
+  --   * Create a new wanted for Show
+  --   * Use its EvBindId as the inner dict for ShowLev
+  --   * Set its CtOrigin to be a superclass of ShowLev
+  --   * Emit the new wanted
+  (showLevDicts, mNewWanteds) <- fmap (unzip . catMaybes) $
+    for (findShowLevWanted names <$> wanted) $ \case
+      FoundUnlifted ty ct -> do
+        unshowableDict <- Ghc.unsafeTcPluginTcM $ buildUnshowableDict ty
+        pure $ Just ((unshowableDict, ct), Nothing)
+      FoundLifted ty ct -> do
+        (showDict, newWanted) <- buildShowLevDict names ct ty
         let (succInst, _) = fromRight (error "impossible: no Succeed instance") $
               Ghc.lookupUniqueInstEnv instEnvs (succeedClass names) [ty]
-         in (liftDict succInst ty (getEvExprFromDict showDict), ct)
-    NotFound -> pure Nothing
-  pure $ Ghc.TcPluginOk (catMaybes solved) []
+        pure $ Just
+          ((liftDict succInst ty (getEvExprFromDict showDict), ct)
+          , Just newWanted
+          )
+      NotFound -> pure Nothing
 
-buildDict
+  -- Check if wanted is Show with a superclass chain that includes ShowLev
+  -- and create the missing Show dict if so.
+  unshowableDicts <- for (findShowWithSuperclass names `mapMaybe` wanted) $
+    \(ty, ct) -> do
+        dict <- lookupUnshowableDict names ty
+        pure (dict, ct)
+
+  pure $ Ghc.TcPluginOk
+           (showLevDicts ++ unshowableDicts)
+           (catMaybes mNewWanteds)
+
+buildShowLevDict
   :: TcPluginNames
-  -> Ghc.Class
-  -> [Ghc.Type]
-  -> Ghc.TcPluginM (Maybe Ghc.EvTerm)
-buildDict names cls tys = do
+  -> Ghc.Ct
+  -> Ghc.Type
+  -> Ghc.TcPluginM (Ghc.EvTerm, Ghc.Ct)
+buildShowLevDict names showLevWanted ty = do
+  let ctLoc = (Ghc.ctLoc showLevWanted)
+        { Ghc.ctl_origin =
+            Ghc.WantedSuperclassOrigin (Ghc.ctPred showLevWanted)
+                                       (Ghc.ctOrigin showLevWanted)
+        }
+  showWantedEv <-
+    Plugin.newWanted
+      ctLoc
+      (Ghc.mkTyConApp (Ghc.classTyCon $ showClass names) [ty])
+  let showCt = Ghc.mkNonCanonical showWantedEv
+  pure (Ghc.ctEvTerm showWantedEv, showCt)
+
+lookupUnshowableDict
+  :: TcPluginNames
+  -> Ghc.Type
+  -> Ghc.TcPluginM Ghc.EvTerm
+lookupUnshowableDict names ty = do
   instEnvs <- Plugin.getInstEnvs
-  case Ghc.lookupUniqueInstEnv instEnvs cls tys of
-    Right (clsInst, _) -> do
-      let dfun = Ghc.is_dfun clsInst
-          (vars, subclasses, inst) = Ghc.tcSplitSigmaTy $ Ghc.idType dfun
-      if null subclasses
-         then pure . Just $ Ghc.evDFunApp dfun [] [] -- why no use of vars here?
-         else do
-           let tyVarMap = mkTyVarMapping inst tys
-           mSolvedSubClassDicts <- fmap sequence . for subclasses $ \subclass -> do
-             let (subCls, subTys) = Ghc.tcSplitDFunHead subclass
-                 subTys' = instantiateVars tyVarMap subTys
-             buildDict names subCls subTys'
-           pure $ do
-             vars' <- traverse (tyVarMap M.!?) vars
-             Ghc.evDFunApp dfun vars' . map getEvExprFromDict
-               <$> mSolvedSubClassDicts
-    Left _
-      | cls == showClass names
-      , [ty] <- tys -> do
-          unshowableDict <- Ghc.unsafeTcPluginTcM $ buildUnshowableDict ty
-          let (inst, _) = fromRight (error "impossible: no Show instance for ShowWrapper") $
-                Ghc.lookupUniqueInstEnv
-                  instEnvs
-                  (showClass names)
-                  [Ghc.mkTyConApp (showWrapperTyCon names) [ty]]
-              liftedDict =
-                liftDict inst ty (getEvExprFromDict unshowableDict)
-          pure $ Just liftedDict
-      | otherwise -> pure Nothing
+  unshowableDict <- Ghc.unsafeTcPluginTcM $ buildUnshowableDict ty
+  let (inst, _) = fromRight (error "impossible: no Show instance for ShowWrapper") $
+        Ghc.lookupUniqueInstEnv
+          instEnvs
+          (showClass names)
+          [Ghc.mkTyConApp (showWrapperTyCon names) [ty]]
+  pure $ liftDict inst ty (getEvExprFromDict unshowableDict)
 
 getEvExprFromDict :: Ghc.EvTerm -> Ghc.EvExpr
 getEvExprFromDict = \case
   Ghc.EvExpr expr -> expr
   _ -> error "invalid argument to getEvExprFromDict"
-
-mkTyVarMapping
-  :: Ghc.Type -- Wanted instance
-  -> [Ghc.Type] -- Concrete types
-  -> M.Map Ghc.TyVar Ghc.Type
-mkTyVarMapping wanted tys =
-  let wantedHead = snd $ Ghc.splitAppTys wanted
-      wantedTyVars = concatMap (snd . Ghc.splitAppTys) wantedHead
-      concreteTys = concatMap (snd . Ghc.splitAppTys) tys
-   in M.fromList $ do
-     (a, b) <- zip wantedTyVars concreteTys
-     Just tyVar <- [Ghc.getTyVar_maybe a]
-     pure (tyVar, b)
-
-instantiateVars :: M.Map Ghc.TyVar Ghc.Type -> [Ghc.Type] -> [Ghc.Type]
-instantiateVars tyVarMap tys = replace <$> tys
-  where
-    replace arg = fromMaybe arg $ do
-      tyVar <- Ghc.getTyVar_maybe arg
-      M.lookup tyVar tyVarMap -- this lookup shouldn't fail
 
 buildUnshowableDict :: Ghc.Type -> Ghc.TcM Ghc.EvTerm
 buildUnshowableDict ty = do

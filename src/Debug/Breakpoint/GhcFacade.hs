@@ -41,7 +41,6 @@ import           GHC.Hs.Utils as Ghc
 import           GHC.Types.Unique.Set as Ghc
 import           GHC.Utils.Outputable as Ghc
 import           GHC.Hs.Binds as Ghc
-import           GHC.Rename.Bind as Ghc
 import           GHC.Data.Bag as Ghc
 import           GHC.Types.Basic as Ghc
 import           GHC.Types.Name.Env as Ghc
@@ -59,6 +58,7 @@ import           GHC.Core.TyCon as Ghc
 import           GHC.Types.TyThing.Ppr as Ghc
 import           GHC.Hs.Expr as Ghc
 import           GHC.Types.PkgQual as Ghc
+import           GHC.Tc.Types.Origin as Ghc
 
 #elif MIN_VERSION_ghc(9,4,0)
 import           GHC.Driver.Plugins as Ghc hiding (TcPlugin)
@@ -78,7 +78,6 @@ import           GHC.Hs.Utils as Ghc
 import           GHC.Types.Unique.Set as Ghc
 import           GHC.Utils.Outputable as Ghc
 import           GHC.Hs.Binds as Ghc
-import           GHC.Rename.Bind as Ghc
 import           GHC.Data.Bag as Ghc
 import           GHC.Types.Basic as Ghc
 import           GHC.Types.Name.Env as Ghc
@@ -96,6 +95,7 @@ import           GHC.Core.TyCon as Ghc
 import           GHC.Types.TyThing.Ppr as Ghc
 import           GHC.Hs.Expr as Ghc
 import           GHC.Types.PkgQual as Ghc
+import           GHC.Tc.Types.Origin as Ghc
 
 #elif MIN_VERSION_ghc(9,2,0)
 import           GHC.Driver.Plugins as Ghc hiding (TcPlugin)
@@ -115,7 +115,6 @@ import           GHC.Hs.Utils as Ghc
 import           GHC.Types.Unique.Set as Ghc
 import           GHC.Utils.Outputable as Ghc
 import           GHC.Hs.Binds as Ghc
-import           GHC.Rename.Bind as Ghc
 import           GHC.Data.Bag as Ghc
 import           GHC.Types.Basic as Ghc
 import           GHC.Types.Name.Env as Ghc
@@ -132,6 +131,7 @@ import           GHC.Core.Type as Ghc
 import           GHC.Core.TyCon as Ghc
 import           GHC.Types.TyThing.Ppr as Ghc
 import           GHC.Hs.Expr as Ghc
+import           GHC.Tc.Types.Origin as Ghc
 
 #elif MIN_VERSION_ghc(9,0,0)
 import           GHC.Driver.Plugins as Ghc hiding (TcPlugin)
@@ -150,7 +150,6 @@ import           GHC.Hs.Utils as Ghc
 import           GHC.Types.Unique.Set as Ghc
 import           GHC.Utils.Outputable as Ghc
 import           GHC.Hs.Binds as Ghc
-import           GHC.Rename.Bind as Ghc
 import           GHC.Data.Bag as Ghc
 import           GHC.Types.Basic as Ghc
 import           GHC.Types.Name.Env as Ghc
@@ -172,6 +171,7 @@ import           GHC.Hs.Expr as Ghc
 import           GHC.Hs.Pat as Ghc
 import           GHC.Hs.Decls as Ghc
 import           GHC.Hs.Lit as Ghc
+import           GHC.Tc.Types.Origin as Ghc
 
 #elif MIN_VERSION_ghc(8,10,0)
 import           GHC.Hs.Expr as Ghc

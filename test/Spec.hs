@@ -1,3 +1,7 @@
+{-# LANGUAGE UndecidableInstances #-}
+{-# LANGUAGE FlexibleContexts #-}
+{-# LANGUAGE TypeApplications #-}
+{-# LANGUAGE DataKinds #-}
 {-# LANGUAGE ScopedTypeVariables #-}
 {-# LANGUAGE RecordWildCards #-}
 {-# LANGUAGE Arrows #-}
@@ -6,6 +10,7 @@ import           Control.Monad
 import           Data.Fixed
 import qualified Data.Map as M
 import           Data.Maybe
+import           GHC.Records (HasField(..))
 import           Test.Tasty
 import           Test.Tasty.HUnit
 
@@ -42,6 +47,7 @@ testTree =
     , testCase "don't capture do bind in its body" captureInBodyOfDoBind
     , testCase "Shows type that subclass for Show" showFixedPointNumber
     , testCase "exclude vars" excludeVarsTest
+    , testCase "built-in instance subclasses" showBuiltinSubclass
     , ApDo.testTree
     , OS.testTree
     ]
@@ -251,3 +257,20 @@ test23 =
   let x = True
       y = False
    in excludeVars ["y"] captureVars
+
+showBuiltinSubclass :: Assertion
+showBuiltinSubclass = do
+  let m = test24
+  m @?= M.fromList [("x", "1"), ("y", "91.00")]
+
+test24 :: M.Map String String
+test24 =
+  let x = HF $ FFF 1
+      y = 91 :: Fixed 91
+   in captureVars
+
+newtype HF a = HF a
+instance (HasField "fff" a b, Show b) => Show (HF a) where
+  show (HF a) = show $ getField @"fff" a
+
+newtype FFF = FFF { fff :: Int }
