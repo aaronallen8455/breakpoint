@@ -29,7 +29,8 @@ library
                       Debug.Breakpoint.TimerManager,
 
     -- Modules included in this library but not exported.
-    -- other-modules:
+    other-modules: Debug.Breakpoint.Renamer,
+                   Debug.Breakpoint.TypeChecker
 
     -- LANGUAGE extensions used by modules in this package.
     -- other-extensions:
