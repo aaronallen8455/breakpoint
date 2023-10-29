@@ -22,6 +22,7 @@ module Debug.Breakpoint.GhcFacade
   , pattern ExplicitList'
   , pattern BindStmt'
   , pattern OverLit'
+  , pattern CDictCan'
   ) where
 
 #if MIN_VERSION_ghc(9,6,0)
@@ -400,3 +401,16 @@ pattern OverLit' lit
 #else
   <- Ghc.OverLit _ lit _
 #endif
+
+pattern CDictCan'
+  :: Ghc.CtEvidence
+  -> Ghc.Class
+  -> [Ghc.Xi]
+  -> Ghc.Ct
+pattern CDictCan' diEv diCls diTys
+#if MIN_VERSION_ghc(9,8,0)
+  <- Ghc.CDictCan (Ghc.DictCt diEv diCls diTys _)
+#else
+  <- Ghc.CDictCan diEv diCls diTys _
+#endif
+

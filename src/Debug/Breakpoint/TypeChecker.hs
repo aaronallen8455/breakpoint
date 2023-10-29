@@ -64,9 +64,9 @@ findShowLevWanted
   -> Ghc.Ct
   -> FindWantedResult
 findShowLevWanted names ct
-  | Ghc.CDictCan{..} <- ct
-  , showLevClassName names == Ghc.getName cc_class
-  , [Ghc.TyConApp tyCon [], arg2] <- cc_tyargs
+  | Ghc.CDictCan' _ di_cls di_tys <- ct
+  , showLevClassName names == Ghc.getName di_cls
+  , [Ghc.TyConApp tyCon [], arg2] <- di_tys
   = if Ghc.getName tyCon == Ghc.liftedRepName
        then FoundLifted arg2 ct
        else FoundUnlifted arg2 ct
@@ -77,10 +77,10 @@ findShowWithSuperclass
   -> Ghc.Ct
   -> Maybe (Ghc.Type, Ghc.Ct)
 findShowWithSuperclass names ct
-  | Ghc.CDictCan{..} <- ct
-  , Ghc.getName (showClass names) == Ghc.getName cc_class
-  , hasShowLevSuperclass . Ghc.ctLocOrigin $ Ghc.ctev_loc cc_ev
-  , [arg] <- cc_tyargs
+  | Ghc.CDictCan' di_ev di_cls di_tys <- ct
+  , Ghc.getName (showClass names) == Ghc.getName di_cls
+  , hasShowLevSuperclass . Ghc.ctLocOrigin $ Ghc.ctev_loc di_ev
+  , [arg] <- di_tys
   = Just (arg, ct)
   | otherwise = Nothing
   where

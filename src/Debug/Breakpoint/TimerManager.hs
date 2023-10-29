@@ -43,14 +43,22 @@ psqAdjust =
 psqKey =
   $(pure $ VarE $
       Name (OccName "key")
+#if MIN_VERSION_ghc(9,8,0)
+           (NameG (FldName "E") (PkgName "base") (ModName "GHC.Event.PSQ"))
+#else
            (NameG VarName (PkgName "base") (ModName "GHC.Event.PSQ"))
+#endif
    )
 
 -- emTimeouts :: TimerManager -> IORef TimeoutQueue
 emTimeouts =
   $(pure $ VarE $
       Name (OccName "emTimeouts")
+#if MIN_VERSION_ghc(9,8,0)
+           (NameG (FldName "TimerManager") (PkgName "base") (ModName "GHC.Event.TimerManager"))
+#else
            (NameG VarName (PkgName "base") (ModName "GHC.Event.TimerManager"))
+#endif
    )
 
 wakeManager :: TimerManager -> IO ()

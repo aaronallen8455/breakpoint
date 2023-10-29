@@ -1,5 +1,8 @@
 # Revision history for breakpoint
 
+## 0.1.2.3 -- 2023-10-28
+* Support GHC 9.8.x
+
 ## 0.1.2.2 -- 2023-09-02
 * Improvement to instance resolution for showing arbitrary values
 * Strictly evaluate variable output before modifying timeouts
