@@ -96,7 +96,7 @@ hsVarCase (Ghc.HsVar _ (Ghc.L loc name)) = do
         = Ghc.nlHsLit . Ghc.mkHsString
         . Ghc.showSDocUnsafe
         . Ghc.ppr
-        $ Ghc.locA' loc
+        $ Ghc.locA loc
 
       captureVarsExpr mResultName =
         let mkTuple (Ghc.fromLexicalFastString -> varStr, n) =
@@ -104,11 +104,9 @@ hsVarCase (Ghc.HsVar _ (Ghc.L loc name)) = do
                 [ Ghc.nlHsLit . Ghc.mkHsString $ Ghc.unpackFS varStr
                 , Ghc.nlHsApp (Ghc.nlHsVar showLevName) (Ghc.nlHsVar n)
                 ]
-#if MIN_VERSION_ghc(9,2,0)
                 Ghc.NoExtField
-#endif
 
-            mkList exprs = Ghc.noLocA' (Ghc.ExplicitList' Ghc.NoExtField exprs)
+            mkList exprs = Ghc.noLocA (Ghc.ExplicitList Ghc.NoExtField exprs)
 
             varSetWithResult
               | Just resName <- mResultName =
@@ -237,9 +235,6 @@ matchCase Ghc.Match {..} = do
   grhRes <- addScopedVars names $ recurse m_grhss
   pure $ Just
     Ghc.Match { Ghc.m_grhss = grhRes, .. }
-#if !MIN_VERSION_ghc(9,0,0)
-matchCase _ = pure Nothing
-#endif
 
 extractVarPats :: Ghc.LPat Ghc.GhcRn -> VarSet
 extractVarPats = mkVarSet . Ghc.collectPatBinders'
@@ -253,25 +248,14 @@ grhssCase :: Ghc.GRHSs Ghc.GhcRn (Ghc.LHsExpr Ghc.GhcRn)
 grhssCase Ghc.GRHSs {..} = do
   (localBindsRes, names)
     <- dealWithLocalBinds
-#if MIN_VERSION_ghc(9,2,0)
          grhssLocalBinds
-#else
-         (Ghc.unLoc grhssLocalBinds)
-#endif
 
   grhsRes <- addScopedVars names $ recurse grhssGRHSs
   pure $ Just
     Ghc.GRHSs { Ghc.grhssGRHSs = grhsRes
-#if MIN_VERSION_ghc(9,2,0)
               , grhssLocalBinds = localBindsRes
-#else
-              , grhssLocalBinds = localBindsRes <$ grhssLocalBinds
-#endif
               , ..
               }
-#if !MIN_VERSION_ghc(9,0,0)
-grhssCase _ = pure Nothing
-#endif
 
 dealWithBind :: VarSet
              -> Ghc.LHsBind Ghc.GhcRn
@@ -337,9 +321,6 @@ grhsCase (Ghc.GRHS x guards body) = do
   (guardsRes, names) <- runWriterT $ dealWithStatements guards
   bodyRes <- addScopedVars names $ recurse body
   pure . Just $ Ghc.GRHS x guardsRes bodyRes
-#if !MIN_VERSION_ghc(9,0,0)
-grhsCase _ = pure Nothing
-#endif
 
 --------------------------------------------------------------------------------
 -- Let Binds (Non-do)
@@ -427,11 +408,11 @@ dealWithStmt :: (Data (Ghc.Stmt Ghc.GhcRn body), Data body)
              => Ghc.Stmt Ghc.GhcRn body
              -> WriterT VarSet EnvReader (Ghc.Stmt Ghc.GhcRn body)
 dealWithStmt = \case
-  Ghc.BindStmt' x lpat body bindExpr failExpr -> do
+  Ghc.BindStmt x lpat body -> do
     let names = extractVarPats lpat
     tell names
     bodyRes <- lift $ recurse body
-    pure $ Ghc.BindStmt' x lpat bodyRes bindExpr failExpr
+    pure $ Ghc.BindStmt x lpat bodyRes
 
   Ghc.LetStmt' x (Ghc.L loc localBinds) -> do
     (bindsRes, names) <- lift $ dealWithLocalBinds localBinds
@@ -447,9 +428,6 @@ dealWithStmt = \case
             tell $ extractVarPats bv_pattern
             (stmtsRes, _) <- lift . runWriterT $ dealWithStatements app_stmts
             pure a {Ghc.app_stmts = stmtsRes}
-#if !MIN_VERSION_ghc(9,0,0)
-          a -> lift $ gmapM recurse a
-#endif
     pairsRes <- (traverse . traverse) dealWithAppArg pairs
     pure $ Ghc.ApplicativeStmt x pairsRes mbJoin
 
@@ -476,9 +454,6 @@ hsProcCase (Ghc.HsProc x1 lpat cmdTop) = do
           _ -> empty -- TODO what other cases should be handled?
 
         pure $ Ghc.HsCmdTop x2 cmdRes
-#if !MIN_VERSION_ghc(9,0,0)
-      _ -> empty
-#endif
     pure $ Ghc.HsProc x1 lpat cmdTopRes
 hsProcCase _ = pure Nothing
 
@@ -489,7 +464,7 @@ hsProcCase _ = pure Nothing
 -- The writer is for tracking if an inner expression contains the target name
 type EnvReader = WriterT Any (ReaderT Env Ghc.TcM)
 
-type VarSet = M.Map Ghc.LexicalFastString' Ghc.Name
+type VarSet = M.Map Ghc.LexicalFastString Ghc.Name
 
 data Env = MkEnv
   { varSet :: !VarSet
@@ -515,7 +490,7 @@ data Env = MkEnv
 overVarSet :: (VarSet -> VarSet) -> Env -> Env
 overVarSet f env = env { varSet = f $ varSet env }
 
-getOccNameFS :: Ghc.Name -> Ghc.LexicalFastString'
+getOccNameFS :: Ghc.Name -> Ghc.LexicalFastString
 getOccNameFS = Ghc.mkLexicalFastString . Ghc.occNameFS . Ghc.getOccName
 
 mkVarSet :: [Ghc.Name] -> VarSet

@@ -5,13 +5,10 @@
 module Debug.Breakpoint.GhcFacade
   ( module Ghc
   , liftedRepName
-  , LexicalFastString'
   , mkLexicalFastString
   , fromLexicalFastString
   , collectHsBindBinders'
   , collectPatBinders'
-  , noLocA'
-  , locA'
   , mkWildValBinder'
   , pprTypeForUser'
   , showSDocOneLine'
@@ -20,7 +17,6 @@ module Debug.Breakpoint.GhcFacade
   , pattern HsLet'
   , pattern LetStmt'
   , pattern ExplicitList'
-  , pattern BindStmt'
   , pattern OverLit'
   , pattern CDictCan'
   ) where
@@ -134,147 +130,24 @@ import           GHC.Types.TyThing.Ppr as Ghc
 import           GHC.Hs.Expr as Ghc
 import           GHC.Tc.Types.Origin as Ghc
 
-#elif MIN_VERSION_ghc(9,0,0)
-import           GHC.Driver.Plugins as Ghc hiding (TcPlugin)
-import           GHC.Driver.Finder as Ghc
-import           GHC.Hs.Extension as Ghc
-import           GHC.Tc.Types as Ghc
-import qualified GHC.Tc.Plugin as Plugin
-import           GHC.Parser.Annotation as Ghc
-import           GHC.Types.SrcLoc as Ghc
-import           GHC.Types.Name as Ghc
-import           GHC.Iface.Env as Ghc
-import           GHC.Unit.Module.Name as Ghc
-import           GHC.Tc.Utils.Monad as Ghc hiding (TcPlugin)
-import           GHC.Data.FastString as Ghc
-import           GHC.Hs.Utils as Ghc
-import           GHC.Types.Unique.Set as Ghc
-import           GHC.Utils.Outputable as Ghc
-import           GHC.Hs.Binds as Ghc
-import           GHC.Data.Bag as Ghc
-import           GHC.Types.Basic as Ghc
-import           GHC.Types.Name.Env as Ghc
-import           GHC.Builtin.Types as Ghc
-import           GHC.Core.TyCo.Rep as Ghc
-import           GHC.Tc.Types.Constraint as Ghc
-import           GHC.Core.Make as Ghc
-import           GHC.Tc.Types.Evidence as Ghc
-import           GHC.Types.Id as Ghc
-import           GHC.Core.InstEnv as Ghc
-import           GHC.Core.Class as Ghc hiding (FunDep)
-import           GHC.Tc.Utils.TcType as Ghc
-import           GHC.Core.Type as Ghc
-import           GHC.Core.TyCon as Ghc
-import           GHC.Core.Ppr.TyThing as Ghc
-import           GHC.Driver.Types as Ghc
-import           GHC.Driver.Session as Ghc
-import           GHC.Hs.Expr as Ghc
-import           GHC.Hs.Pat as Ghc
-import           GHC.Hs.Decls as Ghc
-import           GHC.Hs.Lit as Ghc
-import           GHC.Tc.Types.Origin as Ghc
-
-#elif MIN_VERSION_ghc(8,10,0)
-import           GHC.Hs.Expr as Ghc
-import           GHC.Hs.Extension as Ghc
-import           GHC.Hs.Binds as Ghc
-import           GHC.Hs.Lit as Ghc
-import           SrcLoc as Ghc
-import           GHC.Hs.Utils as Ghc
-import           Name as Ghc
-import           GHC.Hs.Pat as Ghc
-import           FastString as Ghc
-import           TysWiredIn as Ghc
-import           InstEnv as Ghc
-import           TcEvidence as Ghc
-import           TyCoRep as Ghc
-import           MkCore as Ghc
-import           PprTyThing as Ghc
-import           Outputable as Ghc
-import           TcRnTypes as Ghc
-import           Type as Ghc
-import           TcType as Ghc
-import           Id as Ghc
-import           Class as Ghc
-import           Constraint as Ghc
-import           Module as Ghc
-import           HscTypes as Ghc
-import           TyCon as Ghc
-import           Bag as Ghc
-import           BasicTypes as Ghc
-import           UniqSet as Ghc
-import           NameEnv as Ghc
-import           IfaceEnv as Ghc
-import           Finder as Ghc hiding (findImportedModule)
-import           TcPluginM as Ghc hiding (lookupOrig, getTopEnv, getEnvs, newUnique)
-import           GHC.Hs.Decls as Ghc
-import           TcRnMonad as Ghc
-import           Plugins as Ghc hiding (TcPlugin)
-import           DynFlags as Ghc
-import qualified TcPluginM as Plugin
-import           TcOrigin as Ghc
 #endif
 
 liftedRepName :: Ghc.Name
-#if MIN_VERSION_ghc(9,2,0)
 liftedRepName = Ghc.getName Ghc.liftedRepTyCon
-#else
-liftedRepName = Ghc.getName Ghc.liftedRepDataCon
-#endif
 
-#if MIN_VERSION_ghc(9,2,0)
-type LexicalFastString' = Ghc.LexicalFastString
-#else
-type LexicalFastString' = Ghc.FastString
-#endif
-
-mkLexicalFastString :: Ghc.FastString -> LexicalFastString'
-fromLexicalFastString :: LexicalFastString' -> Ghc.FastString
-#if MIN_VERSION_ghc(9,2,0)
+mkLexicalFastString :: Ghc.FastString -> Ghc.LexicalFastString
+fromLexicalFastString :: Ghc.LexicalFastString -> Ghc.FastString
 mkLexicalFastString = Ghc.LexicalFastString
 fromLexicalFastString (Ghc.LexicalFastString fs) = fs
-#else
-mkLexicalFastString = id
-fromLexicalFastString = id
-#endif
 
 collectHsBindBinders' :: Ghc.HsBindLR Ghc.GhcRn idR -> [Ghc.Name]
-collectHsBindBinders' = Ghc.collectHsBindBinders
-#if MIN_VERSION_ghc(9,2,0)
-                          Ghc.CollNoDictBinders
-#endif
+collectHsBindBinders' = Ghc.collectHsBindBinders Ghc.CollNoDictBinders
 
 collectPatBinders' :: Ghc.LPat Ghc.GhcRn -> [Ghc.Name]
-collectPatBinders' = Ghc.collectPatBinders
-#if MIN_VERSION_ghc(9,2,0)
-                       Ghc.CollNoDictBinders
-#endif
-
-noLocA'
-#if MIN_VERSION_ghc(9,2,0)
-  :: a -> LocatedAn an a
-noLocA'
-  = noLocA
-#else
-  :: a -> Located a
-noLocA'
-  = noLoc
-#endif
-
-#if MIN_VERSION_ghc(9,2,0)
-locA' :: Ghc.SrcSpanAnn' ann -> Ghc.SrcSpan
-locA' = Ghc.locA
-#else
-locA' :: Ghc.SrcSpan -> Ghc.SrcSpan
-locA' = id
-#endif
+collectPatBinders' = Ghc.collectPatBinders Ghc.CollNoDictBinders
 
 mkWildValBinder' :: Ghc.Type -> Ghc.Id
-#if MIN_VERSION_ghc(9,0,0)
 mkWildValBinder' = Ghc.mkWildValBinder Ghc.oneDataConTy
-#else
-mkWildValBinder' = Ghc.mkWildValBinder
-#endif
 
 pprTypeForUser' :: Ghc.Type -> Ghc.SDoc
 #if MIN_VERSION_ghc(9,4,0)
@@ -284,15 +157,7 @@ pprTypeForUser' = Ghc.pprTypeForUser
 #endif
 
 showSDocOneLine' :: Ghc.SDoc -> String
-showSDocOneLine' =
-#if MIN_VERSION_ghc(9,2,0)
-  Ghc.showSDocOneLine Ghc.defaultSDocContext
-#elif MIN_VERSION_ghc(9,0,0)
-  Ghc.showSDocOneLine
-    $ Ghc.initDefaultSDocContext Ghc.unsafeGlobalDynFlags
-#else
-  Ghc.showSDocOneLine Ghc.unsafeGlobalDynFlags
-#endif
+showSDocOneLine' = Ghc.showSDocOneLine Ghc.defaultSDocContext
 
 findImportedModule' :: Ghc.ModuleName -> Ghc.TcPluginM Ghc.FindResult
 #if MIN_VERSION_ghc(9,4,0)
@@ -371,27 +236,6 @@ pattern ExplicitList' x exprs <- Ghc.ExplicitList x _ exprs
     ExplicitList' x exprs = Ghc.ExplicitList x Nothing exprs
 #endif
 
-#if MIN_VERSION_ghc(9,0,0)
-mkSyntaxExprs :: x -> (SyntaxExpr Ghc.GhcRn, SyntaxExpr Ghc.GhcRn, x)
-mkSyntaxExprs x = (Ghc.noSyntaxExpr, Ghc.noSyntaxExpr, x)
-#endif
-
-pattern BindStmt'
-  :: Ghc.XBindStmt Ghc.GhcRn Ghc.GhcRn body
-  -> Ghc.LPat Ghc.GhcRn
-  -> body
-  -> SyntaxExpr Ghc.GhcRn
-  -> SyntaxExpr Ghc.GhcRn
-  -> Ghc.Stmt Ghc.GhcRn body
-#if MIN_VERSION_ghc(9,0,0)
-pattern BindStmt' x pat body expr1 expr2
-    <- Ghc.BindStmt x pat (mkSyntaxExprs -> (expr1, expr2, body))
-  where
-    BindStmt' x pat body _ _ = Ghc.BindStmt x pat body
-#else
-pattern BindStmt' x pat body bindExpr failExpr = Ghc.BindStmt x pat body bindExpr failExpr
-#endif
-
 pattern OverLit'
   :: Ghc.OverLitVal
   -> Ghc.HsOverLit Ghc.GhcRn
@@ -411,6 +255,6 @@ pattern CDictCan' diEv diCls diTys
 #if MIN_VERSION_ghc(9,8,0)
   <- Ghc.CDictCan (Ghc.DictCt diEv diCls diTys _)
 #else
-  <- Ghc.CDictCan diEv diCls diTys _
+  <- Ghc.CDictCan { Ghc.cc_ev = diEv, Ghc.cc_class = diCls, Ghc.cc_tyargs = diTys }
 #endif
 

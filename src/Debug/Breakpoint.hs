@@ -224,14 +224,8 @@ breakpointIO =
 getSrcLoc :: String
 getSrcLoc = ""
 
-#if MIN_VERSION_ghc(9,2,0)
 -- Use an "unsafe" foreign function to more or less stop the runtime.
--- In older GHCs this can cause out of control CPU usage so settle for getLine instead
 foreign import ccall unsafe "stdio.h getchar" blockOnInput :: IO Int
-#else
-blockOnInput :: IO Int
-blockOnInput = 1 <$ getLine
-#endif
 
 -- | Excludes the given variable names from appearing in the output of any
 -- breakpoints occurring in the given expression.
@@ -260,7 +254,6 @@ class ShowLev (rep :: Exts.RuntimeRep) (a :: Exts.TYPE rep) where
 instance ShowLev 'Exts.IntRep Exts.Int# where
   showLev i = show $ I# i
 
-#if MIN_VERSION_base(4,16,0)
 instance ShowLev 'Exts.Int8Rep Exts.Int8# where
   showLev i = show $ I8# i
 
@@ -269,7 +262,6 @@ instance ShowLev 'Exts.Int16Rep Exts.Int16# where
 
 instance ShowLev 'Exts.Int32Rep Exts.Int32# where
   showLev i = show $ I32# i
-#endif
 
 #if MIN_VERSION_base(4,17,0)
 instance ShowLev 'Exts.Int64Rep Exts.Int64# where
@@ -279,7 +271,6 @@ instance ShowLev 'Exts.Int64Rep Exts.Int64# where
 instance ShowLev 'Exts.WordRep Exts.Word# where
   showLev w = show $ W# w
 
-#if MIN_VERSION_base(4,16,0)
 instance ShowLev 'Exts.Word8Rep Exts.Word8# where
   showLev w = show $ W8# w
 
@@ -288,7 +279,6 @@ instance ShowLev 'Exts.Word16Rep Exts.Word16# where
 
 instance ShowLev 'Exts.Word32Rep Exts.Word32# where
   showLev w = show $ W32# w
-#endif
 
 #if MIN_VERSION_base(4,17,0)
 instance ShowLev 'Exts.Word64Rep Exts.Word64# where

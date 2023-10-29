@@ -8,11 +8,7 @@ module Debug.Breakpoint.TypeChecker
 import           Data.Either
 import           Data.Maybe
 import           Data.Traversable (for)
-#if MIN_VERSION_ghc(9,0,0)
 import qualified GHC.Tc.Plugin as Plugin
-#else
-import qualified TcPluginM as Plugin
-#endif
 
 import qualified Debug.Breakpoint.GhcFacade as Ghc
 

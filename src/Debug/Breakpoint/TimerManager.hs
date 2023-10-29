@@ -5,7 +5,7 @@ module Debug.Breakpoint.TimerManager
   ( suspendTimeouts
   ) where
 
-#if defined(mingw32_HOST_OS) || !MIN_VERSION_ghc(9,2,0)
+#if defined(mingw32_HOST_OS)
 -- Since Windows has its own timeout manager internals, I'm choosing not to support it for now.
 
 suspendTimeouts :: IO a -> IO a

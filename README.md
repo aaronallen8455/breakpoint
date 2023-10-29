@@ -71,7 +71,7 @@ within angle brackets.
 
 Execution of the program effectively halts on waiting for user input. In
 concurrent programs, all threads will be stopped, not just the one executing
-the breakpoint (GHC >= 9.2.x only).
+the breakpoint.
 
 ### Querying variables
 
@@ -89,7 +89,7 @@ thread is blocked while the prompt is active. To resume execution, press enter
 with a blank line.
 
 ### Caveats
-- Currently supports GHC version 8.10.x - 9.8.x
+- Currently supports GHC version 9.2.x - 9.8.x
 - Printing values may cause thunks to be evaluated earlier than they otherwise
   would which could be problematic for programs that rely heavily on laziness.
 - `ApplicativeDo` can sometimes cause variables that are in scope to not be traced.
@@ -97,8 +97,7 @@ with a blank line.
 - `RecursiveDo` binds aren't visible before they are bound, despite being in scope.
 - If there is anything buffered in `stdin` then that will interfere with the
   blocking mechanism.
-- Concurrent threads are not blocked in GHC < 9.2.x
-- On Windows, in GHC < 9.2.x, or when using the non-threaded runtime, calls to
+- On Windows or when using the non-threaded runtime, calls to
   `threadDelay` are not suspended by breakpoints in the sense that time
   continues to elapse, however they won't unblock until the breakpoint
   finishes.
