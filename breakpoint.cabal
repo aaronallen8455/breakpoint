@@ -7,8 +7,6 @@ synopsis:
 description:
   A plugin that allows you to set breakpoints for debugging purposes.
 
-  See the [README](https://github.com/aaronallen8455/breakpoint#breakpoint) for details.
-
 -- A URL where users can report bugs.
 -- bug-reports:
 license:            MIT
@@ -22,6 +20,7 @@ bug-reports: https://github.com/aaronallen8455/breakpoint/issues
 -- copyright:
 category:           Development
 extra-source-files: CHANGELOG.md
+extra-doc-files: README.md
 
 library
     exposed-modules:  Debug.Breakpoint,
