@@ -1,5 +1,8 @@
 # Revision history for breakpoint
 
+## 0.1.3.1 -- 2024-02-25
+* Bump `ansi-terminal` bounds
+
 ## 0.1.3.0 -- 2023-10-28
 * Support GHC 9.8.x
 * Drop support for GHC 8.10.x and 9.0.x
