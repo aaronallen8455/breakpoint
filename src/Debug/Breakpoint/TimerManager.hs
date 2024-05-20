@@ -15,7 +15,9 @@ suspendTimeouts = id
 
 import           Control.Concurrent(rtsSupportsBoundThreads)
 import           Control.Monad (when)
+#if !MIN_VERSION_ghc(9,10,0)
 import           Data.Foldable (foldl')
+#endif
 import           Data.IORef
 import           Data.Word (Word64)
 import qualified GHC.Clock as Clock
@@ -24,6 +26,8 @@ import           Language.Haskell.TH
 import           Language.Haskell.TH.Syntax
 import           System.IO.Unsafe
 
+import           Debug.Breakpoint.TimerManager.Names
+
 --------------------------------------------------------------------------------
 -- Hidden functions imported via TH
 --------------------------------------------------------------------------------
@@ -31,22 +35,22 @@ import           System.IO.Unsafe
 psqToList =
   $(pure $ VarE $
       Name (OccName "toList")
-           (NameG VarName (PkgName "base") (ModName "GHC.Event.PSQ"))
+           (NameG VarName (PkgName pkgName) (ModName psqModName))
    )
 
 psqAdjust =
   $(pure $ VarE $
       Name (OccName "adjust")
-           (NameG VarName (PkgName "base") (ModName "GHC.Event.PSQ"))
+           (NameG VarName (PkgName pkgName) (ModName psqModName))
    )
 
 psqKey =
   $(pure $ VarE $
       Name (OccName "key")
 #if MIN_VERSION_ghc(9,8,0)
-           (NameG (FldName "E") (PkgName "base") (ModName "GHC.Event.PSQ"))
+           (NameG (FldName "E") (PkgName pkgName) (ModName psqModName))
 #else
-           (NameG VarName (PkgName "base") (ModName "GHC.Event.PSQ"))
+           (NameG VarName (PkgName pkgName) (ModName psqModName))
 #endif
    )
 
@@ -55,9 +59,9 @@ emTimeouts =
   $(pure $ VarE $
       Name (OccName "emTimeouts")
 #if MIN_VERSION_ghc(9,8,0)
-           (NameG (FldName "TimerManager") (PkgName "base") (ModName "GHC.Event.TimerManager"))
+           (NameG (FldName "TimerManager") (PkgName pkgName) (ModName timerManagerModName))
 #else
-           (NameG VarName (PkgName "base") (ModName "GHC.Event.TimerManager"))
+           (NameG VarName (PkgName pkgName) (ModName timerManagerModName))
 #endif
    )
 
@@ -65,48 +69,8 @@ wakeManager :: TimerManager -> IO ()
 wakeManager =
   $(pure $ VarE $
       Name (OccName "wakeManager")
-           (NameG VarName (PkgName "base") (ModName "GHC.Event.TimerManager"))
+           (NameG VarName (PkgName pkgName) (ModName timerManagerModName))
    )
-
--- Windows specific definitions
--- #if defined(mingw32_HOST_OS)
--- modifyDelay =
---   $( do
---      let delayName = Name (OccName "Delay")
---                           (NameG DataName (PkgName "base") (ModName "GHC.Conc.Windows"))
--- 
---          matchDelay f =
---            match (conP delayName [varP $ mkName "secs", varP $ mkName "mvar"]) body []
---              where
---                body = normalB $ appsE [ conE delayName
---                                       , appE (varE $ mkName "f") (varE $ mkName "secs")
---                                       , varE $ mkName "mvar"
---                                       ]
--- 
---          delaySTMName = Name (OccName "DelaySTM")
---                           (NameG DataName (PkgName "base") (ModName "GHC.Conc.Windows"))
--- 
---          matchDelaySTM f =
---            match (conP delaySTMName [varP $ mkName "secs", varP $ mkName "tvar"]) body []
---              where
---                body = normalB $ appsE [ conE delaySTMName
---                                       , appE (varE $ mkName "f") (varE $ mkName "secs")
---                                       , varE $ mkName "tvar"
---                                       ]
--- 
---      lamE [varP $ mkName "f", varP $ mkName "delay"] $
---        caseE (varE $ mkName "delay")
---          [ matchDelay
---          , matchDelaySTM
---          ]
---    )
--- 
--- pendingDelays =
---   $(pure $ VarE $
---       Name (OccName "pendingDelays")
---            (NameG VarName (PkgName "base") (ModName "GHC.Conc.Windows"))
---   )
--- #endif
 
 --------------------------------------------------------------------------------
 -- Timeout editing
@@ -125,13 +89,6 @@ modifyTimeouts :: (Word64 -> Word64) -> IO ()
 modifyTimeouts f =
   -- This only works for the threaded RTS
   when rtsSupportsBoundThreads $ do
--- #if defined(mingw32_HOST_OS)
---     -- Windows has its own way of tracking delays
---     let modifyDelay = \case
---           Delay x y -> Delay (f x) y
---           DelaySTM x y -> DelaySTM (f x) y
---     atomicModifyIORef'_ pendingDelays (fmap $ modifyDelay f)
--- #else
     mgr <- getSystemTimerManager
     editTimeouts mgr $ \pq ->
       let els = psqToList pq

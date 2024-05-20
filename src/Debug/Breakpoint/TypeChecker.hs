@@ -30,21 +30,17 @@ tcPlugin = Ghc.TcPlugin
   { Ghc.tcPluginInit  = initTcPlugin
   , Ghc.tcPluginSolve = solver
   , Ghc.tcPluginStop = const $ pure ()
-#if MIN_VERSION_ghc(9,4,0)
   , Ghc.tcPluginRewrite = mempty
-#endif
   }
 
 initTcPlugin :: Ghc.TcPluginM TcPluginNames
 initTcPlugin = do
-  Ghc.Found _ breakpointMod <-
+  breakpointMod <-
     Ghc.findImportedModule' (Ghc.mkModuleName "Debug.Breakpoint")
-  Ghc.Found _ showMod <-
-    Ghc.findImportedModule' (Ghc.mkModuleName "GHC.Show")
 
   showLevClassName <- Plugin.lookupOrig breakpointMod (Ghc.mkClsOcc "ShowLev")
   showLevNameTc <- Plugin.lookupOrig breakpointMod (Ghc.mkVarOcc "showLev")
-  showClass <- Plugin.tcLookupClass =<< Plugin.lookupOrig showMod (Ghc.mkClsOcc "Show")
+  showClass <- Plugin.tcLookupClass Ghc.showClassName
   succeedClass <- Plugin.tcLookupClass =<< Plugin.lookupOrig breakpointMod (Ghc.mkClsOcc "Succeed")
   showWrapperTyCon <- Plugin.tcLookupTyCon =<< Plugin.lookupOrig breakpointMod (Ghc.mkClsOcc "ShowWrapper")
 

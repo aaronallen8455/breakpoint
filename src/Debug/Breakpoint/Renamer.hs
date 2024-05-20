@@ -202,7 +202,7 @@ hsAppCase :: Ghc.LHsExpr Ghc.GhcRn
           -> EnvReader (Maybe (Ghc.LHsExpr Ghc.GhcRn))
 hsAppCase (Ghc.unLoc -> Ghc.HsApp _ f innerExpr)
   | Ghc.HsApp _ (Ghc.unLoc -> Ghc.HsVar _ (Ghc.unLoc -> name))
-                (Ghc.unLoc -> Ghc.ExplicitList' _ exprsToExclude)
+                (Ghc.unLoc -> Ghc.ExplicitList _ exprsToExclude)
       <- Ghc.unLoc f
   = do
     MkEnv{..} <- lift ask
@@ -329,12 +329,12 @@ grhsCase (Ghc.GRHS x guards body) = do
 -- TODO could combine with hsVar case to allow for "quick failure"
 hsLetCase :: Ghc.HsExpr Ghc.GhcRn
           -> EnvReader (Maybe (Ghc.HsExpr Ghc.GhcRn))
-hsLetCase (Ghc.HsLet' x letToken (Ghc.L loc localBinds) inToken inExpr) = do
+hsLetCase (Ghc.HsLet' x letToken localBinds inToken inExpr) = do
   (bindsRes, names) <- dealWithLocalBinds localBinds
 
   inExprRes <- addScopedVars names $ recurse inExpr
   pure . Just $
-    Ghc.HsLet' x letToken (Ghc.L loc bindsRes) inToken inExprRes
+    Ghc.HsLet' x letToken bindsRes inToken inExprRes
 hsLetCase _ = pure Nothing
 
 dealWithLocalBinds
@@ -414,10 +414,10 @@ dealWithStmt = \case
     bodyRes <- lift $ recurse body
     pure $ Ghc.BindStmt x lpat bodyRes
 
-  Ghc.LetStmt' x (Ghc.L loc localBinds) -> do
+  Ghc.LetStmt x localBinds -> do
     (bindsRes, names) <- lift $ dealWithLocalBinds localBinds
     tell names
-    pure $ Ghc.LetStmt' x (Ghc.L loc bindsRes)
+    pure $ Ghc.LetStmt x bindsRes
 
   Ghc.ApplicativeStmt x pairs mbJoin -> do
     let dealWithAppArg = \case

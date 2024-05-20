@@ -12,10 +12,10 @@ jobs:
       matrix:
         os: [ubuntu-latest, macOS-latest, windows-latest]
         ghc:
-          - "9.2.2"
           - "9.4.2"
           - "9.6.1"
           - "9.8.1"
+          - "9.10.1"
 
     steps:
     - uses: actions/checkout@v3
