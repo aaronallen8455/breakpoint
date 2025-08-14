@@ -18,9 +18,10 @@ module Debug.Breakpoint.GhcFacade
   , pattern HsLet'
   , pattern OverLit'
   , pattern CDictCan'
+  , mkHsLam'
   ) where
 
-#if MIN_VERSION_ghc(9,6,0)
+#if MIN_VERSION_ghc(9,12,0)
 import           GHC.Driver.Plugins as Ghc hiding (TcPlugin)
 import           GHC.Hs.Extension as Ghc
 import           Language.Haskell.Syntax as Ghc
@@ -57,8 +58,9 @@ import           GHC.Types.TyThing.Ppr as Ghc
 import           GHC.Hs.Expr as Ghc
 import           GHC.Types.PkgQual as Ghc
 import           GHC.Tc.Types.Origin as Ghc
+import           GHC.Tc.Types.CtLoc as Ghc
 
-#elif MIN_VERSION_ghc(9,4,0)
+#elif MIN_VERSION_ghc(9,6,0)
 import           GHC.Driver.Plugins as Ghc hiding (TcPlugin)
 import           GHC.Hs.Extension as Ghc
 import           Language.Haskell.Syntax as Ghc
@@ -70,7 +72,6 @@ import           GHC.Types.Name as Ghc
 import           GHC.Iface.Env as Ghc
 import           GHC.Unit.Finder as Ghc
 import           GHC.Unit.Types as Ghc
-import           GHC.Unit.Module.Name as Ghc
 import           GHC.Tc.Utils.Monad as Ghc hiding (TcPlugin, DefaultingPlugin)
 import           GHC.Data.FastString as Ghc
 import           GHC.Hs.Utils as Ghc
@@ -129,14 +130,8 @@ findImportedModule' modName =
     _ -> fail "Could not find module!"
 
 findPluginModule' :: Ghc.ModuleName -> Ghc.TcM Ghc.FindResult
-#if MIN_VERSION_ghc(9,4,0)
 findPluginModule' modName =
   Ghc.runTcPluginM $ Plugin.findImportedModule modName Ghc.NoPkgQual
-#else
-findPluginModule' modName = do
-  hscEnv <- Ghc.getTopEnv
-  liftIO $ Ghc.findPluginModule hscEnv modName
-#endif
 
 type LetToken =
 #if MIN_VERSION_ghc(9,10,0)
@@ -192,3 +187,12 @@ pattern CDictCan' diEv diCls diTys
   <- Ghc.CDictCan { Ghc.cc_ev = diEv, Ghc.cc_class = diCls, Ghc.cc_tyargs = diTys }
 #endif
 
+mkHsLam'
+  :: [LPat GhcRn]
+  -> LHsExpr GhcRn
+  -> LHsExpr GhcRn
+#if MIN_VERSION_ghc(9,12,0)
+mkHsLam' pats = Ghc.mkHsLam (Ghc.noLocA pats)
+#else
+mkHsLam' = Ghc.mkHsLam
+#endif

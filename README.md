@@ -89,7 +89,8 @@ thread is blocked while the prompt is active. To resume execution, press enter
 with a blank line.
 
 ### Caveats
-- Currently supports GHC version 9.2.x - 9.8.x
+- Aims to support the 4 latest major GHC releases. Check the cabal file to see
+  which versions are currently supported.
 - Printing values may cause thunks to be evaluated earlier than they otherwise
   would which could be problematic for programs that rely heavily on laziness.
 - `ApplicativeDo` can sometimes cause variables that are in scope to not be traced.

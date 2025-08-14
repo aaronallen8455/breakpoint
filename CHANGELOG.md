@@ -1,5 +1,9 @@
 # Revision history for breakpoint
 
+## 0.1.5.0 -- 2025-08-14
+* Support GHC 9.12.x
+* Drop support for 9.4
+
 ## 0.1.4.0 -- 2024-02-25
 * Support GHC 9.10.x
 * Drop support for 9.2

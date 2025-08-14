@@ -12,19 +12,20 @@ jobs:
       matrix:
         os: [ubuntu-latest, macOS-latest, windows-latest]
         ghc:
-          - "9.4.2"
           - "9.6.1"
           - "9.8.1"
           - "9.10.1"
+          - "9.12.1"
 
     steps:
     - uses: actions/checkout@v3
 
-    - uses: haskell/actions/setup@v2.4.6
+    - uses: haskell-actions/setup@v2.7.9
       id: setup-haskell-cabal
       name: Setup Haskell
       with:
         ghc-version: ${{ matrix.ghc }}
+        cabal-version: '3.12.1.0'
 
     - name: Update Cabal Index
       run: |

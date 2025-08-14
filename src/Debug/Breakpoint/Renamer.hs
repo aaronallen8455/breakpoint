@@ -22,6 +22,7 @@ import qualified Data.Map.Lazy as M
 import           Data.Maybe
 import           Data.Monoid (Any(..))
 import           Data.Traversable (for)
+import           GHC.Exts (fromList, toList)
 
 import qualified Debug.Breakpoint.GhcFacade as Ghc
 
@@ -121,7 +122,7 @@ hsVarCase (Ghc.HsVar _ (Ghc.L loc name)) = do
       bpExpr = do
         resultName <- Ghc.newName (Ghc.mkOccName Ghc.varName "_result_")
         pure $
-          Ghc.mkHsLam [Ghc.nlVarPat resultName] $
+          Ghc.mkHsLam' [Ghc.nlVarPat resultName] $
             Ghc.nlHsApp
               (Ghc.nlHsApp
                 (Ghc.nlHsApp (Ghc.nlHsVar printAndWaitName) srcLocStringExpr)
@@ -147,7 +148,7 @@ hsVarCase (Ghc.HsVar _ (Ghc.L loc name)) = do
       queryVarsExpr = do
         resultName <- Ghc.newName (Ghc.mkOccName Ghc.varName "_result_")
         pure $
-          Ghc.mkHsLam [Ghc.nlVarPat resultName] $
+          Ghc.mkHsLam' [Ghc.nlVarPat resultName] $
             Ghc.nlHsApp
               (Ghc.nlHsApp
                 (Ghc.nlHsApp (Ghc.nlHsVar runPromptName) srcLocStringExpr)
@@ -231,7 +232,11 @@ hsAppCase _ = pure Nothing
 matchCase :: Ghc.Match Ghc.GhcRn (Ghc.LHsExpr Ghc.GhcRn)
           -> EnvReader (Maybe (Ghc.Match Ghc.GhcRn (Ghc.LHsExpr Ghc.GhcRn)))
 matchCase Ghc.Match {..} = do
+#if MIN_VERSION_ghc(9,12,0)
+  let names = (foldMap . foldMap) extractVarPats m_pats
+#else
   let names = foldMap extractVarPats m_pats
+#endif
   grhRes <- addScopedVars names $ recurse m_grhss
   pure $ Just
     Ghc.Match { Ghc.m_grhss = grhRes, .. }
@@ -311,10 +316,6 @@ dealWithBind resultNames lbind = for lbind $ \case
           | otherwise = psb_ext
     pure $ Ghc.PatSynBind x Ghc.PSB { psb_def = defRes, psb_ext = rhsVars, .. }
 
-#if !MIN_VERSION_ghc(9,4,0)
-  other -> pure other
-#endif
-
 grhsCase :: Ghc.GRHS Ghc.GhcRn (Ghc.LHsExpr Ghc.GhcRn)
          -> EnvReader (Maybe (Ghc.GRHS Ghc.GhcRn (Ghc.LHsExpr Ghc.GhcRn)))
 grhsCase (Ghc.GRHS x guards body) = do
@@ -344,8 +345,8 @@ dealWithLocalBinds = \case
   hlb@(Ghc.HsValBinds x valBinds) -> case valBinds of
     Ghc.ValBinds{} -> pure (hlb, mempty)
     Ghc.XValBindsLR (Ghc.NValBinds bindPairs sigs) -> do
-      let binds = Ghc.bagToList
-                . Ghc.unionManyBags
+      let binds = toList
+                . mconcat
                 $ map snd bindPairs :: [Ghc.LHsBind Ghc.GhcRn]
           names = map (foldMap Ghc.collectHsBindBinders')
                       binds
@@ -419,7 +420,11 @@ dealWithStmt = \case
     tell names
     pure $ Ghc.LetStmt x bindsRes
 
+#if MIN_VERSION_ghc(9,12,0)
+  Ghc.XStmtLR (Ghc.ApplicativeStmt x pairs mbJoin) -> do
+#else
   Ghc.ApplicativeStmt x pairs mbJoin -> do
+#endif
     let dealWithAppArg = \case
           a@Ghc.ApplicativeArgOne{..} -> do
             tell $ extractVarPats app_arg_pattern
@@ -429,7 +434,11 @@ dealWithStmt = \case
             (stmtsRes, _) <- lift . runWriterT $ dealWithStatements app_stmts
             pure a {Ghc.app_stmts = stmtsRes}
     pairsRes <- (traverse . traverse) dealWithAppArg pairs
+#if MIN_VERSION_ghc(9,12,0)
+    pure $ Ghc.XStmtLR (Ghc.ApplicativeStmt x pairsRes mbJoin)
+#else
     pure $ Ghc.ApplicativeStmt x pairsRes mbJoin
+#endif
 
   other -> lift $ gmapM recurse other
 
@@ -514,7 +523,6 @@ depAnalBinds binds_w_dus
              binds_w_dus
 
     get_binds (Graph.AcyclicSCC (bind, _, _)) =
-      (Ghc.NonRecursive, Ghc.unitBag bind)
+      (Ghc.NonRecursive, fromList [bind])
     get_binds (Graph.CyclicSCC  binds_w_dus') =
-      (Ghc.Recursive, Ghc.listToBag [b | (b,_,_) <- binds_w_dus'])
-
+      (Ghc.Recursive, fromList [b | (b,_,_) <- binds_w_dus'])
