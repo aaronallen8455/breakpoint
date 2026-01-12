@@ -90,7 +90,7 @@ transform a = runMaybeT
 
 hsVarCase :: Ghc.HsExpr Ghc.GhcRn
           -> EnvReader (Maybe (Ghc.HsExpr Ghc.GhcRn))
-hsVarCase (Ghc.HsVar _ (Ghc.L loc name)) = do
+hsVarCase (Ghc.HsVar _ (Ghc.L loc (Ghc.getName -> name))) = do
   MkEnv{..} <- lift ask
 
   let srcLocStringExpr
@@ -202,7 +202,7 @@ hsVarCase _ = pure Nothing
 hsAppCase :: Ghc.LHsExpr Ghc.GhcRn
           -> EnvReader (Maybe (Ghc.LHsExpr Ghc.GhcRn))
 hsAppCase (Ghc.unLoc -> Ghc.HsApp _ f innerExpr)
-  | Ghc.HsApp _ (Ghc.unLoc -> Ghc.HsVar _ (Ghc.unLoc -> name))
+  | Ghc.HsApp _ (Ghc.unLoc -> Ghc.HsVar _ (Ghc.getName -> name))
                 (Ghc.unLoc -> Ghc.ExplicitList _ exprsToExclude)
       <- Ghc.unLoc f
   = do

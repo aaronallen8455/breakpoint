@@ -71,7 +71,7 @@ findShowWithSuperclass
 findShowWithSuperclass names ct
   | Ghc.CDictCan' di_ev di_cls di_tys <- ct
   , Ghc.getName (showClass names) == Ghc.getName di_cls
-  , hasShowLevSuperclass . Ghc.ctLocOrigin $ Ghc.ctev_loc di_ev
+  , hasShowLevSuperclass . Ghc.ctLocOrigin $ Ghc.ctEvLoc di_ev
   , [arg] <- di_tys
   = Just (arg, ct)
   | otherwise = Nothing
